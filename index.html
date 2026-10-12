@@ -1,0 +1,1786 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<!--
+  名刺管理 — このHTMLにはアプリの仕組みだけが入っており、個人情報は一切含まれません。
+  名刺データ・画像は各端末の IndexedDB と、利用者が iCloud Drive に保存するバックアップファイルにのみ存在します。
+  下のCSPにより、このページから自サイト以外のサーバーへ通信することはブラウザレベルで禁止されています。
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; worker-src 'self' blob:; connect-src 'self' blob: data:; font-src 'self'; media-src 'none'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; manifest-src 'self'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="名刺">
+<meta name="theme-color" content="#f3f2ee">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<title>名刺管理</title>
+<style>
+:root{
+  --bg:#f3f2ee; --paper:#fbfaf7; --paper2:#f7f5f0; --ink:#23262f; --muted:#6b6f7b; --faint:#9a9da6;
+  --line:#dcd9d0; --line2:#e8e5dd; --accent:#2a3a6b; --accent2:#3b4e8a; --accent-soft:#e6e9f2;
+  --gold:#b08d57; --danger:#a23b3b; --danger-soft:#f6e7e5; --ok:#3d6b4a; --warn-soft:#f6efdf;
+  --mincho:"Hiragino Mincho ProN","Yu Mincho","YuMincho","Noto Serif JP",serif;
+  --sans:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic",sans-serif;
+  --r:12px; --shadow:0 1px 2px rgba(35,38,47,.06),0 4px 16px rgba(35,38,47,.06);
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);-webkit-text-size-adjust:100%}
+body{min-height:100vh;padding-bottom:env(safe-area-inset-bottom)}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+[hidden]{display:none!important}
+a{color:var(--accent)}
+
+/* ── header ── */
+.top{position:sticky;top:0;z-index:20;background:rgba(243,242,238,.94);backdrop-filter:saturate(1.4) blur(10px);-webkit-backdrop-filter:saturate(1.4) blur(10px);border-bottom:1px solid var(--line);padding:calc(env(safe-area-inset-top) + 10px) max(16px,env(safe-area-inset-right)) 8px max(16px,env(safe-area-inset-left))}
+.bar{display:flex;align-items:center;gap:8px}
+.bar h1{font-family:var(--mincho);font-size:21px;font-weight:600;margin:0;letter-spacing:.08em;flex:1;white-space:nowrap}
+.bar h1 small{font-family:var(--sans);font-size:12px;color:var(--muted);font-weight:400;letter-spacing:0;margin-left:6px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid var(--line);background:var(--paper);border-radius:10px;padding:8px 12px;font-size:14px;line-height:1.2;white-space:nowrap;user-select:none;-webkit-user-select:none}
+.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:var(--accent2)}
+.btn.ghost{background:transparent;border-color:transparent}
+.btn.danger{color:var(--danger);border-color:#e3c9c5;background:var(--danger-soft)}
+.btn.small{padding:5px 9px;font-size:13px;border-radius:8px}
+.btn.icon{width:38px;height:38px;padding:0;font-size:18px}
+.btn[disabled]{opacity:.45;pointer-events:none}
+.search{display:flex;gap:8px;margin-top:10px}
+.search input{flex:1;min-width:0;border:1px solid var(--line);background:var(--paper);border-radius:10px;padding:9px 12px;font-size:16px;outline:none}
+.search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.search select{border:1px solid var(--line);background:var(--paper);border-radius:10px;padding:0 8px;font-size:14px;max-width:38%}
+.chips{display:flex;gap:6px;overflow-x:auto;padding:8px 0 2px;scrollbar-width:none}
+.chips::-webkit-scrollbar{display:none}
+.chip{flex:none;border:1px solid var(--line);background:var(--paper);border-radius:999px;padding:4px 11px;font-size:13px;color:var(--muted)}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.chip b{font-weight:500;opacity:.7;margin-left:3px;font-size:11px}
+.banner{margin-top:8px;display:flex;align-items:center;gap:10px;background:var(--warn-soft);border:1px solid #e8dcc0;border-radius:10px;padding:7px 10px;font-size:13px}
+.banner span{flex:1}
+
+/* ── layout ── */
+.layout{padding:12px max(16px,env(safe-area-inset-right)) 40px max(16px,env(safe-area-inset-left))}
+.list{display:flex;flex-direction:column;gap:8px}
+.row{display:flex;gap:12px;align-items:center;background:var(--paper);border:1px solid var(--line2);border-radius:var(--r);padding:10px;text-align:left;width:100%;box-shadow:var(--shadow)}
+.row.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent-soft)}
+.thumb{flex:none;width:76px;height:46px;border-radius:5px;background:var(--paper2) center/cover no-repeat;border:1px solid var(--line2)}
+.thumb.none{display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:11px}
+.row .tx{flex:1;min-width:0}
+.row .nm{font-family:var(--mincho);font-size:17px;font-weight:600;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .nm small{font-family:var(--sans);font-weight:400;font-size:12px;color:var(--muted);margin-left:6px;letter-spacing:0}
+.row .sub{font-size:13px;color:var(--accent);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .org{font-size:12.5px;color:var(--muted);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .hit{font-size:12.5px;color:var(--ink);background:var(--warn-soft);border-radius:5px;padding:2px 6px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .nm .mm{font-size:12px;margin-left:4px;opacity:.6}
+.memo{margin-top:16px;background:var(--paper);border:1px solid var(--line2);border-radius:var(--r);padding:12px 14px}
+.memo h4{margin:0 0 8px;font-size:12.5px;color:var(--muted);font-weight:500;display:flex;justify-content:space-between;align-items:center}
+.memo .body{font-size:14.5px;line-height:1.7;white-space:pre-wrap;word-break:break-word;margin-bottom:10px}
+.memo .body .d{color:var(--gold);font-size:12.5px}
+.memo .add{display:flex;gap:8px;align-items:flex-end}
+.memo textarea{flex:1;min-width:0;border:1px solid var(--line);background:#fff;border-radius:9px;padding:8px 10px;font-size:16px;min-height:42px;max-height:180px;resize:vertical;outline:none}
+.memo textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.empty{text-align:center;color:var(--muted);padding:48px 16px;line-height:1.9}
+.empty .big{font-family:var(--mincho);font-size:19px;color:var(--ink);margin-bottom:6px}
+
+/* ── detail ── */
+.detail{background:var(--bg)}
+.dhead{display:flex;align-items:center;gap:8px;margin-bottom:12px}
+.dhead .sp{flex:1}
+.cardimgs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}
+.cardimgs.one{grid-template-columns:1fr;max-width:480px}
+@media (min-width:900px){.cardimgs{max-width:760px}}
+.cardimgs img{width:100%;aspect-ratio:91/55;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:var(--paper2);cursor:zoom-in;display:block}
+.cardimgs .cap{font-size:11px;color:var(--muted);margin-top:3px;text-align:center}
+.dname{font-family:var(--mincho);font-size:28px;font-weight:600;letter-spacing:.08em;margin:0}
+.dkana{font-size:13px;color:var(--muted);margin-top:2px}
+.dsub{color:var(--accent);font-size:15px;margin-top:8px}
+.dorg{font-size:15px;margin-top:4px}
+.dl{margin-top:16px;background:var(--paper);border:1px solid var(--line2);border-radius:var(--r);overflow:hidden}
+.dl div{display:flex;gap:12px;padding:10px 14px;border-top:1px solid var(--line2);font-size:14.5px;line-height:1.5}
+.dl div:first-child{border-top:0}
+.dl dt{flex:none;width:7em;color:var(--muted);font-size:12.5px;padding-top:2px}
+.dl dd{margin:0;flex:1;min-width:0;word-break:break-word;white-space:pre-wrap}
+.dacts{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+.dmeta{font-size:12px;color:var(--faint);margin-top:14px}
+.ocrraw{margin-top:14px}
+.ocrraw summary{font-size:13px;color:var(--muted);cursor:pointer}
+.ocrraw pre{white-space:pre-wrap;font-size:12px;background:var(--paper);border:1px solid var(--line2);border-radius:8px;padding:10px;color:var(--muted)}
+.placeholder{color:var(--faint);text-align:center;padding:80px 20px;font-family:var(--mincho);font-size:17px}
+
+@media (max-width:899px){
+  .detail{position:fixed;inset:0;z-index:40;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:calc(env(safe-area-inset-top) + 10px) max(16px,env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 30px) max(16px,env(safe-area-inset-left));animation:slidein .18s ease-out}
+  .detail .placeholder{display:none}
+}
+@media (min-width:900px){
+  .layout{display:grid;grid-template-columns:minmax(340px,420px) 1fr;gap:20px;align-items:start}
+  .detail{position:sticky;top:150px;max-height:calc(100vh - 170px);overflow-y:auto;padding:4px 4px 20px}
+  .detail[hidden]{display:block!important}
+  .back-only{display:none!important}
+}
+@keyframes slidein{from{transform:translateX(24px);opacity:.4}to{transform:none;opacity:1}}
+
+/* ── sheets ── */
+.sheet{position:fixed;inset:0;z-index:60;background:rgba(35,38,47,.35);display:flex;align-items:flex-end;justify-content:center}
+.sheet .panel{background:var(--bg);width:100%;max-width:760px;max-height:100%;overflow-y:auto;-webkit-overflow-scrolling:touch;border-radius:16px 16px 0 0;padding:0 max(16px,env(safe-area-inset-right)) calc(env(safe-area-inset-bottom) + 24px) max(16px,env(safe-area-inset-left));box-shadow:0 -8px 40px rgba(0,0,0,.18)}
+@media (max-width:899px){.sheet .panel{height:100%;border-radius:0}}
+@media (min-width:900px){.sheet{align-items:center;padding:24px}.sheet .panel{border-radius:16px;max-height:calc(100vh - 48px)}}
+.phead{position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:8px;background:rgba(243,242,238,.96);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);padding:calc(env(safe-area-inset-top) + 10px) 0 10px;border-bottom:1px solid var(--line);margin-bottom:14px}
+@media (min-width:900px){.phead{padding-top:12px}}
+.phead h2{flex:1;margin:0;font-size:17px;font-family:var(--mincho);letter-spacing:.06em;text-align:center}
+.sec{margin:18px 0 6px;font-size:12px;color:var(--muted);letter-spacing:.1em}
+
+/* editor */
+.slots{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+@media (max-width:520px){.slots{gap:8px}.slot{padding:6px}.slot .acts{gap:5px}.slot .acts .btn{padding:7px 6px;font-size:13px}.slot .st{font-size:11px}}
+.slot{background:var(--paper);border:1px dashed var(--line);border-radius:var(--r);padding:8px}
+.slot.has{border-style:solid;border-color:var(--line2)}
+.slot.drag{border-color:var(--accent);background:var(--accent-soft)}
+.slot .lbl{font-size:12px;color:var(--muted);margin-bottom:6px;display:flex;justify-content:space-between}
+.slot .pv{aspect-ratio:91/55;border-radius:7px;background:var(--paper2) center/contain no-repeat;display:flex;align-items:center;justify-content:center;color:var(--faint);font-size:13px;border:1px solid var(--line2)}
+.slot .acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.slot .acts .btn{flex:1 1 auto}
+.slot .st{font-size:12px;color:var(--accent);min-height:1.4em;margin-top:6px}
+.prog{height:3px;background:var(--line2);border-radius:2px;overflow:hidden;margin-top:4px}
+.prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fgrid .full{grid-column:1/-1}
+.f label{display:block;font-size:12px;color:var(--muted);margin:0 0 4px 2px}
+.f input,.f textarea{width:100%;border:1px solid var(--line);background:var(--paper);border-radius:9px;padding:9px 11px;font-size:16px;outline:none}
+.f textarea{min-height:80px;resize:vertical}
+.f input:focus,.f textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.f.key input{background:#fff;border-color:#cfd5e6}
+.f.auto input{background:#fffdf6}
+.namerow{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end}
+.namerow input{font-family:var(--mincho);font-size:19px;font-weight:600;letter-spacing:.06em}
+.ocrbox{margin-top:16px;background:var(--paper);border:1px solid var(--line2);border-radius:var(--r);padding:10px}
+.ocrbox .hd{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
+.ocrbox .hd span{flex:1}
+.lines{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.ln{border:1px solid var(--line);background:var(--paper2);border-radius:7px;padding:4px 8px;font-size:13px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:left}
+.ln:active{background:var(--accent-soft)}
+.hint{font-size:12px;color:var(--muted);line-height:1.7}
+.foot{display:flex;gap:10px;margin-top:22px}
+.foot .btn{flex:1;padding:12px}
+
+/* sync */
+.card{background:var(--paper);border:1px solid var(--line2);border-radius:var(--r);padding:14px;margin-bottom:12px}
+.card h3{margin:0 0 8px;font-size:15px}
+.card .btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.card .btns .btn{flex:1 1 auto}
+.stat{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--muted)}
+.stat b{color:var(--ink);font-weight:600}
+.check{display:flex;align-items:center;gap:8px;font-size:14px;margin-top:10px}
+.check input{width:18px;height:18px}
+.ready{margin-top:10px;background:var(--accent-soft);border-radius:10px;padding:10px;display:flex;gap:10px;align-items:center;font-size:13px}
+.ready span{flex:1}
+ol.howto{margin:6px 0 0;padding-left:1.4em;font-size:13px;line-height:1.8;color:var(--muted)}
+
+/* viewer / toast / dialog */
+.viewer{position:fixed;inset:0;z-index:80;background:rgba(15,17,22,.92);display:flex;align-items:center;justify-content:center;padding:env(safe-area-inset-top) 8px env(safe-area-inset-bottom)}
+.viewer img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px}
+.savebar{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom) + 14px);z-index:50;width:min(560px,calc(100% - 24px));display:flex;align-items:center;gap:8px;background:var(--accent);color:#fff;border-radius:14px;padding:10px 10px 10px 14px;box-shadow:0 8px 28px rgba(35,38,47,.28);animation:barin .2s ease-out}
+.savebar span{flex:1;font-size:13.5px;line-height:1.4}
+.savebar .btn.primary{background:#fff;color:var(--accent);border-color:#fff;font-weight:600}
+.savebar .btn.ghost{color:#dfe3ef}
+@keyframes barin{from{transform:translate(-50%,20px);opacity:0}to{transform:translateX(-50%);opacity:1}}
+body.bar-on #toast{bottom:calc(env(safe-area-inset-bottom) + 84px)}
+body.bar-on .layout{padding-bottom:110px}
+#toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom) + 24px);transform:translateX(-50%) translateY(20px);background:var(--ink);color:#fff;padding:10px 16px;border-radius:10px;font-size:14px;opacity:0;pointer-events:none;transition:.2s;z-index:100;max-width:calc(100% - 32px)}
+#toast.on{opacity:.95;transform:translateX(-50%)}
+dialog{border:0;border-radius:14px;padding:18px;background:var(--paper);color:var(--ink);width:min(420px,calc(100% - 32px));box-shadow:0 10px 40px rgba(0,0,0,.25)}
+dialog::backdrop{background:rgba(35,38,47,.4)}
+dialog h3{margin:0 0 10px;font-size:16px}
+dialog p{font-size:13.5px;color:var(--muted);line-height:1.7;margin:0 0 10px;white-space:pre-wrap}
+dialog .f{margin-top:8px}
+dialog .dbtns{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+dialog .dbtns.row2{flex-direction:row}
+dialog .dbtns.row2 .btn{flex:1}
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="bar">
+    <h1>名刺<small id="count"></small></h1>
+    <button class="btn icon" id="btnSync" title="バックアップ・同期（iCloud）" aria-label="バックアップ・同期">☁︎</button>
+    <button class="btn primary" id="btnAdd">＋ 追加</button>
+  </div>
+  <div class="search">
+    <input id="q" type="search" placeholder="検索：名前・所属・科・役職・メモ…" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search">
+    <select id="sort" aria-label="並び順">
+      <option value="new">新しい順</option>
+      <option value="old">古い順</option>
+      <option value="name">名前順</option>
+      <option value="org">所属順</option>
+      <option value="dept">専門科順</option>
+    </select>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div class="banner" id="banner" hidden><span id="bannerText"></span><button class="btn small primary" id="bannerBtn">iCloudに保存</button></div>
+</header>
+
+<main class="layout">
+  <section class="list" id="list" aria-label="名刺一覧"></section>
+  <section class="detail" id="detail" hidden aria-label="名刺の詳細"></section>
+</main>
+
+<!-- ══ 名刺の追加・編集 ══ -->
+<div class="sheet" id="editor" hidden>
+  <div class="panel">
+    <div class="phead">
+      <button class="btn ghost" data-close>キャンセル</button>
+      <h2 id="edTitle">名刺を追加</h2>
+      <button class="btn primary" id="edSave">保存</button>
+    </div>
+
+    <div class="slots">
+      <div class="slot" data-side="front">
+        <div class="lbl"><span>表面</span><span class="ocrflag"></span></div>
+        <div class="pv">未撮影</div>
+        <div class="acts">
+          <label class="btn primary touch-only">📷 撮影<input type="file" accept="image/*" capture="environment" hidden></label>
+          <label class="btn pick">🖼 写真<input type="file" accept="image/*" hidden></label>
+          <button class="btn small" data-act="rotate" hidden>⟳ 回転</button>
+          <button class="btn small" data-act="remove" hidden>削除</button>
+        </div>
+        <div class="st"></div><div class="prog" hidden><i></i></div>
+      </div>
+      <div class="slot" data-side="back">
+        <div class="lbl"><span>裏面（任意）</span><span class="ocrflag"></span></div>
+        <div class="pv">未撮影</div>
+        <div class="acts">
+          <label class="btn primary touch-only">📷 撮影<input type="file" accept="image/*" capture="environment" hidden></label>
+          <label class="btn pick">🖼 写真<input type="file" accept="image/*" hidden></label>
+          <button class="btn small" data-act="rotate" hidden>⟳ 回転</button>
+          <button class="btn small" data-act="remove" hidden>削除</button>
+        </div>
+        <div class="st"></div><div class="prog" hidden><i></i></div>
+      </div>
+    </div>
+    <p class="hint" style="margin:8px 2px 0">撮影すると自動で文字を読み取り、下の項目に振り分けます（この端末内で処理・外部送信なし）。名刺を画面いっぱいに、真上から撮ると精度が上がります。横向きに写ったときは「⟳ 回転」。</p>
+
+    <div class="sec">基本情報（自動振り分け）</div>
+    <div class="namerow">
+      <div class="f key"><label for="f_sei">姓</label><input id="f_sei" data-k="sei" autocomplete="off"></div>
+      <div class="f key"><label for="f_mei">名</label><input id="f_mei" data-k="mei" autocomplete="off"></div>
+      <button class="btn" id="btnSplit" title="姓と名の区切り位置を変更" style="height:44px">⇆ 区切り</button>
+    </div>
+    <div class="fgrid" style="margin-top:10px" id="fieldsMain"></div>
+
+    <div class="ocrbox" id="ocrBox" hidden>
+      <div class="hd"><span>読み取った文字（入力欄を選んでから行をタップすると、その欄に入ります）</span></div>
+      <div class="lines" id="ocrLines"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+        <button class="btn small" id="btnReapply">読み取り結果で上書き</button>
+      </div>
+    </div>
+    <div style="margin-top:10px">
+      <button class="btn small" id="btnPaste">📋 テキストを貼り付けて振り分け</button>
+      <span class="hint">（iPhoneの「テキスト認識表示」でコピーした文字も使えます）</span>
+    </div>
+
+    <div class="sec">連絡先</div>
+    <div class="fgrid" id="fieldsContact"></div>
+    <div class="sec">交換の記録・メモ</div>
+    <div class="fgrid" id="fieldsMemo"></div>
+
+    <div class="foot">
+      <button class="btn" data-close>キャンセル</button>
+      <button class="btn primary" id="edSave2">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ バックアップ・同期 ══ -->
+<div class="sheet" id="syncSheet" hidden>
+  <div class="panel">
+    <div class="phead">
+      <button class="btn ghost" data-close>閉じる</button>
+      <h2>バックアップ・同期</h2>
+      <span style="width:64px"></span>
+    </div>
+
+    <div class="card">
+      <div class="stat">
+        <span>登録 <b id="stCount">0</b> 件</span>
+        <span>最終保存 <b id="stLast">—</b></span>
+        <span>未保存の変更 <b id="stDirty">0</b> 件</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>☁︎ iCloud Drive に保存</h3>
+      <div class="hint">名刺データと画像を1つのファイル（<code>名刺データ.meishi</code>）にまとめて保存します。</div>
+      <label class="check"><input type="checkbox" id="optEncrypt"> パスワードで暗号化して保存（推奨）</label>
+      <div class="hint" id="encKeyInfo" hidden style="margin-top:6px">🔑 この端末にパスワードを記憶済み（保存時の入力は不要）　<button class="btn small" id="btnForgetKey">記憶を消す</button></div>
+      <div class="btns">
+        <button class="btn primary" id="btnExport">iCloud Drive に保存</button>
+        <button class="btn" id="btnExportPick" hidden>保存先ファイルを選ぶ…</button>
+      </div>
+      <div class="hint" id="linkedFile" hidden style="margin-top:8px"></div>
+      <div class="ready" id="shareReady" hidden><span>ファイルの準備ができました。</span><button class="btn primary small" id="btnShareNow">保存する</button></div>
+      <ol class="howto" id="howtoIOS" hidden>
+        <li>共有シートで「"ファイル"に保存」を選ぶ</li>
+        <li>「iCloud Drive」→ 任意のフォルダ（例：名刺）を選ぶ</li>
+        <li>同名ファイルがある場合は「置き換える」</li>
+      </ol>
+      <div class="hint" id="howtoMac" hidden style="margin-top:8px">Safari の場合は「ダウンロード」フォルダに保存されます。Safari設定 ＞ 一般 ＞ 「ファイルのダウンロード保存先」を iCloud Drive 内のフォルダにしておくと、そのまま iCloud に入ります。</div>
+    </div>
+
+    <div class="card">
+      <h3>⇣ iCloud Drive から読み込み（統合）</h3>
+      <div class="hint">他の端末で保存したファイルを読み込み、この端末のデータと統合します。同じ名刺は更新日時が新しい方を採用し、削除も反映されます。<br>Mac ⇄ iPhone の同期は「読み込み → 保存」の順で行うと確実です。</div>
+      <div class="btns">
+        <label class="btn primary">ファイルを選んで読み込み<input type="file" id="importFile" hidden></label>
+        <button class="btn" id="btnImportLinked" hidden>保存先ファイルから読み込み</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>画像の保存サイズ</h3>
+      <div class="hint">文字の読み取りは撮影したままの高画質で行い、保存する画像だけを縮小します（処理はすべてこの端末内）。</div>
+      <div class="f" style="margin-top:8px"><select id="optImg" style="width:100%;border:1px solid var(--line);background:#fff;border-radius:9px;padding:9px 10px;font-size:15px"></select></div>
+      <div class="stat" style="margin-top:8px"><span>画像の合計 <b id="stImg">—</b></span></div>
+      <div class="btns"><button class="btn" id="btnShrink">保存済みの画像も縮小する</button></div>
+    </div>
+
+    <div class="card">
+      <h3>その他の書き出し</h3>
+      <div class="btns">
+        <button class="btn" id="btnCsv">CSV（表示中の名刺・Excel用・画像なし）</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>この端末の保存領域</h3>
+      <div class="stat"><span>使用量 <b id="stUsage">—</b></span><span>消去されにくい保存 <b id="stPersist">—</b></span></div>
+      <div class="hint" style="margin-top:8px">iPhone では「ホーム画面に追加」したアイコンから使ってください（Safariのタブとホーム画面アプリはデータが別々で、Safariのタブ側は長期間使わないと消去されることがあります）。</div>
+      <div class="btns"><button class="btn" id="btnPersist">消去されにくくする</button></div>
+    </div>
+
+    <div class="card">
+      <h3 style="color:var(--danger)">危険な操作</h3>
+      <div class="hint">この端末のデータだけを消去します（iCloud上のファイルは消えません）。</div>
+      <div class="btns"><button class="btn danger" id="btnWipe">この端末の名刺データをすべて消去</button></div>
+    </div>
+    <div class="hint" style="text-align:center;margin-top:8px">データは端末内（IndexedDB）とあなたの iCloud Drive にのみ保存されます。</div>
+  </div>
+</div>
+
+<div class="savebar" id="saveBar" hidden>
+  <span id="saveBarText">未保存の変更があります</span>
+  <button class="btn small primary" id="saveBarBtn">iCloudに保存</button>
+  <button class="btn small ghost" id="saveBarClose">あとで</button>
+</div>
+<div class="viewer" id="viewer" hidden><img alt=""></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<dialog id="dlg">
+  <h3 id="dlgTitle"></h3>
+  <p id="dlgMsg"></p>
+  <div id="dlgBody"></div>
+  <div class="dbtns" id="dlgBtns"></div>
+</dialog>
+
+<script>
+'use strict';
+/* ════════════════════════════════════════════════════════════════
+   名刺管理  — 個人情報はこのファイルに含めないこと
+   ════════════════════════════════════════════════════════════════ */
+
+// ── 小物 ──────────────────────────────────────────────
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : 'id-' + Date.now().toString(36) + Math.random().toString(36).slice(2));
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isTouch = matchMedia('(pointer:coarse)').matches;
+const pad2 = (n) => String(n).padStart(2, '0');
+const fmtDT = (t) => { if (!t) return '—'; const d = new Date(t); return `${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; };
+let toastTimer;
+function toast(msg, ms = 2400) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(toastTimer); toastTimer = setTimeout(() => t.classList.remove('on'), ms); }
+
+// ── ダイアログ（確認・選択・パスワード入力） ──────────────
+function dialog({ title = '', msg = '', buttons = [], body = '', row = false }) {
+  return new Promise((resolve) => {
+    const d = $('#dlg');
+    $('#dlgTitle').textContent = title;
+    $('#dlgMsg').textContent = msg; $('#dlgMsg').hidden = !msg;
+    $('#dlgBody').innerHTML = body;
+    const bx = $('#dlgBtns'); bx.className = 'dbtns' + (row ? ' row2' : ''); bx.innerHTML = '';
+    buttons.forEach((b) => {
+      const el = document.createElement('button');
+      el.className = 'btn ' + (b.cls || ''); el.textContent = b.label;
+      el.onclick = () => { const v = typeof b.value === 'function' ? b.value() : b.value; if (v === undefined) return; d.close(); resolve(v); };
+      bx.appendChild(el);
+    });
+    d.oncancel = (e) => { e.preventDefault(); d.close(); resolve(null); };
+    d.showModal();
+    const inp = $('input', d); if (inp) setTimeout(() => inp.focus(), 50);
+  });
+}
+const confirmDlg = (title, msg, okLabel = 'OK', danger = false) =>
+  dialog({ title, msg, row: true, buttons: [{ label: 'キャンセル', value: false }, { label: okLabel, value: true, cls: danger ? 'danger' : 'primary' }] });
+function askPassword(forSave) {
+  const body = `<div class="f"><label>パスワード</label><input type="password" id="pw1" autocomplete="off"></div>` +
+    (forSave ? `<div class="f"><label>確認のためもう一度</label><input type="password" id="pw2" autocomplete="off"></div>` : '');
+  return dialog({
+    title: forSave ? '暗号化パスワードを設定' : 'パスワードを入力',
+    msg: forSave ? 'このパスワードを忘れるとファイルを復元できません。パスワードはどこにも保存されません。' : 'このバックアップは暗号化されています。',
+    body, row: true,
+    buttons: [{ label: 'キャンセル', value: null }, {
+      label: 'OK', cls: 'primary', value: () => {
+        const a = $('#pw1').value; if (!a) { toast('パスワードを入力してください'); return undefined; }
+        if (forSave) { if (a.length < 6) { toast('6文字以上にしてください'); return undefined; } if (a !== $('#pw2').value) { toast('パスワードが一致しません'); return undefined; } }
+        return a;
+      },
+    }],
+  });
+}
+
+// ── IndexedDB ────────────────────────────────────────
+// cards : 名刺の文字情報（削除時は deleted:true の墓標として残し、同期で削除を伝える）
+// images: 表裏の画像Blob / thumbs: 一覧用サムネイル / meta: 設定
+const DB_NAME = 'meishi_db';
+let _db;
+function openDB() {
+  return (_db ||= new Promise((res, rej) => {
+    const r = indexedDB.open(DB_NAME, 1);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      d.createObjectStore('cards', { keyPath: 'id' });
+      d.createObjectStore('images', { keyPath: 'id' });
+      d.createObjectStore('thumbs', { keyPath: 'id' });
+      d.createObjectStore('meta', { keyPath: 'k' });
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  }));
+}
+async function tx(stores, mode, fn) {
+  const d = await openDB();
+  return new Promise((res, rej) => {
+    const t = d.transaction(stores, mode);
+    const s = Array.isArray(stores) ? Object.fromEntries(stores.map((n) => [n, t.objectStore(n)])) : t.objectStore(stores);
+    let out; const r = fn(s);
+    if (r && 'onsuccess' in r) r.onsuccess = () => { out = r.result; };
+    t.oncomplete = () => res(out);
+    t.onerror = () => rej(t.error); t.onabort = () => rej(t.error || new Error('aborted'));
+  });
+}
+const dbGet = (st, k) => tx(st, 'readonly', (s) => s.get(k));
+const dbAll = (st) => tx(st, 'readonly', (s) => s.getAll());
+const dbPut = (st, v) => tx(st, 'readwrite', (s) => s.put(v));
+const metaGet = async (k) => (await dbGet('meta', k))?.v;
+const metaSet = (k, v) => dbPut('meta', { k, v });
+
+// ── 状態 ──────────────────────────────────────────────
+const S = { cards: [], q: '', sort: 'new', dept: '', sel: null, thumbs: new Map(), lastExport: 0 };
+
+const FIELDS = [
+  { k: 'org', label: '所属', grp: 'main', full: true, key: true },
+  { k: 'dept', label: '専門科・部署', grp: 'main', key: true },
+  { k: 'title', label: '役職', grp: 'main', key: true },
+  { k: 'kana', label: 'ふりがな', grp: 'main' },
+  { k: 'nameEn', label: 'ローマ字', grp: 'main' },
+  { k: 'quals', label: '資格・専門医など', grp: 'main', full: true },
+  { k: 'tel', label: '電話', grp: 'contact', type: 'tel' },
+  { k: 'mobile', label: '携帯', grp: 'contact', type: 'tel' },
+  { k: 'fax', label: 'FAX', grp: 'contact', type: 'tel' },
+  { k: 'email', label: 'メール', grp: 'contact', type: 'email' },
+  { k: 'address', label: '住所', grp: 'contact', full: true },
+  { k: 'url', label: 'URL', grp: 'contact', full: true, type: 'url' },
+  { k: 'metDate', label: '交換日', grp: 'memo', type: 'date' },
+  { k: 'metPlace', label: '場所・イベント', grp: 'memo' },
+  { k: 'memo', label: 'メモ', grp: 'memo', full: true, textarea: true },
+];
+const PARSE_KEYS = ['sei', 'mei', 'kana', 'nameEn', 'org', 'dept', 'title', 'quals', 'tel', 'mobile', 'fax', 'email', 'address', 'url'];
+const DATA_KEYS = ['sei', 'mei', ...FIELDS.map((f) => f.k)];
+
+// ── 検索用の正規化（全角半角・カタカナひらがな・記号の揺れを吸収） ──
+function norm(s) {
+  return String(s || '').normalize('NFKC').toLowerCase()
+    .replace(/[\u30a1-\u30f6]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0x60))
+    .replace(/[\s\-‐‑‒–—―−ー・,，.。、()（）]/g, '');
+}
+function indexCard(c) {
+  c._idx = norm([c.sei, c.mei, (c.sei || '') + (c.mei || ''), c.kana, c.nameEn, c.org, c.dept, c.title, c.quals, c.tel, c.mobile, c.fax, c.email, c.url, c.address, c.metPlace, c.memo, c.metDate, c.ocrFront, c.ocrBack].join('|'));
+  return c;
+}
+const collator = new Intl.Collator('ja');
+const fullName = (c) => [c.sei, c.mei].filter(Boolean).join(' ') || c.nameEn || '（名前未入力）';
+
+// ════════════════════════════════════════════════════════
+//   一覧・詳細
+// ════════════════════════════════════════════════════════
+async function loadAll() {
+  const all = await dbAll('cards');
+  S.cards = all.filter((c) => !c.deleted).map(indexCard);
+  S.lastExport = (await metaGet('lastExportAt')) || 0;
+  renderAll();
+}
+function renderAll() { renderChips(); renderList(); renderBanner(); $('#count').textContent = S.cards.length ? `${S.cards.length}件` : ''; }
+
+function renderChips() {
+  const cnt = new Map();
+  for (const c of S.cards) { const d = (c.dept || '').trim(); if (d) cnt.set(d, (cnt.get(d) || 0) + 1); }
+  const top = [...cnt.entries()].sort((a, b) => b[1] - a[1] || collator.compare(a[0], b[0])).slice(0, 20);
+  if (S.dept && !cnt.has(S.dept)) S.dept = '';
+  $('#chips').innerHTML = top.length < 2 && !S.dept ? '' :
+    `<button class="chip ${S.dept ? '' : 'on'}" data-dept="">すべて</button>` +
+    top.map(([d, n]) => `<button class="chip ${S.dept === d ? 'on' : ''}" data-dept="${esc(d)}">${esc(d)}<b>${n}</b></button>`).join('');
+}
+
+function filtered() {
+  const terms = S.q.split(/[\s　]+/).map(norm).filter(Boolean);
+  let rows = S.cards.filter((c) => (!S.dept || c.dept === S.dept) && terms.every((t) => c._idx.includes(t)));
+  const nameKey = (c) => (c.kana || '') ? norm(c.kana) : (c.sei || '') + (c.mei || '');
+  const by = {
+    new: (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
+    old: (a, b) => (a.createdAt || 0) - (b.createdAt || 0),
+    name: (a, b) => collator.compare(nameKey(a), nameKey(b)),
+    org: (a, b) => collator.compare(a.org || '\uffff', b.org || '\uffff') || collator.compare(nameKey(a), nameKey(b)),
+    dept: (a, b) => collator.compare(a.dept || '\uffff', b.dept || '\uffff') || collator.compare(nameKey(a), nameKey(b)),
+  }[S.sort];
+  return rows.sort(by);
+}
+
+// 検索語がメモに含まれる場合、その行を一覧に表示する
+function memoHit(c, terms) {
+  if (!terms.length || !c.memo) return '';
+  const lines = c.memo.split('\n').filter((l) => l.trim());
+  const ln = lines.find((l) => terms.some((t) => norm(l).includes(t)));
+  if (!ln) return '';
+  // 一致した語が見えるよう、その付近から切り出す（正規化で位置がずれる場合は先頭から）
+  const lo = ln.normalize('NFKC').toLowerCase().trim();
+  const pos = Math.min(...[...terms, ...S.q.split(/[\s　]+/).filter(Boolean).map((x) => x.normalize('NFKC').toLowerCase())]
+    .map((t) => lo.indexOf(t)).filter((i) => i >= 0), Infinity);
+  const st = pos !== Infinity && pos > 14 ? pos - 8 : 0;
+  return (st ? '…' : '') + ln.trim().slice(st, st + 80);
+}
+function renderList() {
+  const rows = filtered();
+  const terms = S.q.split(/[\s　]+/).map(norm).filter(Boolean);
+  const el = $('#list');
+  if (!S.cards.length) {
+    el.innerHTML = `<div class="empty"><div class="big">名刺はまだありません</div>右上の「＋ 追加」から、名刺の表と裏を撮影して取り込みます。<br>別の端末のデータは「☁︎」から読み込めます。</div>`;
+    return;
+  }
+  if (!rows.length) { el.innerHTML = `<div class="empty">該当する名刺はありません</div>`; return; }
+  el.innerHTML = rows.map((c) => {
+    const sub = [c.title, c.dept].filter(Boolean).join('　');
+    const hit = memoHit(c, terms);
+    return `<button class="row ${S.sel === c.id ? 'sel' : ''}" data-id="${esc(c.id)}">
+      <span class="thumb ${c.hasFront ? '' : 'none'}" data-thumb="${esc(c.id)}">${c.hasFront ? '' : 'NO IMAGE'}</span>
+      <span class="tx"><div class="nm">${esc(fullName(c))}${c.kana ? `<small>${esc(c.kana)}</small>` : ''}${c.memo ? '<span class="mm" title="メモあり">📝</span>' : ''}</div>
+      ${sub ? `<div class="sub">${esc(sub)}</div>` : ''}${c.org ? `<div class="org">${esc(c.org)}</div>` : ''}
+      ${hit ? `<div class="hit">📝 ${esc(hit)}</div>` : ''}</span></button>`;
+  }).join('');
+  loadThumbs();
+}
+let thumbIO;
+function loadThumbs() {
+  thumbIO?.disconnect();
+  thumbIO = new IntersectionObserver((ents) => {
+    for (const e of ents) if (e.isIntersecting) { thumbIO.unobserve(e.target); setThumb(e.target); }
+  }, { rootMargin: '300px' });
+  $$('#list [data-thumb]').forEach((t) => { if (!t.classList.contains('none')) thumbIO.observe(t); });
+}
+async function setThumb(el) {
+  const id = el.dataset.thumb;
+  let url = S.thumbs.get(id);
+  if (!url) { const t = await dbGet('thumbs', id); if (!t?.blob) return; url = URL.createObjectURL(t.blob); S.thumbs.set(id, url); }
+  el.style.backgroundImage = `url("${url}")`;
+}
+function dropThumb(id) { const u = S.thumbs.get(id); if (u) { URL.revokeObjectURL(u); S.thumbs.delete(id); } }
+
+function renderBanner() {
+  const n = dirtyCount();
+  $('#banner').hidden = !n;
+  const days = S.lastExport ? Math.floor((Date.now() - S.lastExport) / 864e5) : -1;
+  $('#bannerText').textContent = `iCloud未保存の変更 ${n}件` + (days < 0 ? '（まだ一度も保存していません）' : days >= 1 ? `（前回の保存から${days}日）` : '');
+  if (!n) hideSaveBar();
+}
+function dirtyCount() { return S._allDirty ?? 0; }
+// データが変わるたびに呼ぶ。showBar=true のときは画面下に「iCloudに保存」バーを出す
+async function refreshDirty(showBar = false) {
+  S.dataVer = (S.dataVer || 0) + 1;
+  const all = await dbAll('cards');
+  S._allDirty = all.filter((c) => (c.localEditAt || 0) > S.lastExport).length;
+  renderBanner();
+  if (showBar && S._allDirty) showSaveBar();
+  schedulePrebuild();
+}
+
+// 詳細
+let detailUrls = [];
+async function showDetail(id) {
+  const c = S.cards.find((x) => x.id === id);
+  const el = $('#detail');
+  detailUrls.forEach(URL.revokeObjectURL); detailUrls = [];
+  if (!c) { S.sel = null; el.innerHTML = `<div class="placeholder">名刺を選択してください</div>`; if (innerWidth < 900) el.hidden = true; $$('.row.sel').forEach((r) => r.classList.remove('sel')); return; }
+  S.sel = id;
+  $$('.row').forEach((r) => r.classList.toggle('sel', r.dataset.id === id));
+  const im = await dbGet('images', id);
+  const imgs = [];
+  for (const [side, cap] of [['front', '表'], ['back', '裏']]) if (im?.[side]) { const u = URL.createObjectURL(im[side]); detailUrls.push(u); imgs.push({ u, cap }); }
+  const link = (k, v) => {
+    if (!v) return '';
+    if (k === 'email') return v.split(' / ').map((x) => `<a href="mailto:${esc(x)}">${esc(x)}</a>`).join(' / ');
+    if (k === 'tel' || k === 'mobile') return v.split(' / ').map((x) => `<a href="tel:${esc(x.replace(/[^\d+]/g, ''))}">${esc(x)}</a>`).join(' / ');
+    if (k === 'url') { const h = /^https?:/i.test(v) ? v : 'https://' + v; return `<a href="${esc(h)}" target="_blank" rel="noopener noreferrer">${esc(v)}</a>`; }
+    return esc(v);
+  };
+  const rows = [['quals', '資格・専門医'], ['tel', '電話'], ['mobile', '携帯'], ['fax', 'FAX'], ['email', 'メール'], ['address', '住所'], ['url', 'URL'], ['nameEn', 'ローマ字'], ['metDate', '交換日'], ['metPlace', '場所・イベント']]
+    .filter(([k]) => c[k]).map(([k, l]) => `<div><dt>${l}</dt><dd>${link(k, c[k])}</dd></div>`).join('');
+  el.innerHTML = `
+    <div class="dhead">
+      <button class="btn back-only" data-act="back">← 一覧</button><span class="sp"></span>
+      <button class="btn" data-act="edit">編集</button>
+    </div>
+    ${imgs.length ? `<div class="cardimgs ${imgs.length === 1 ? 'one' : ''}">${imgs.map((x) => `<div><img src="${x.u}" data-view alt="${x.cap}面"><div class="cap">${x.cap}面</div></div>`).join('')}</div>` : ''}
+    <h2 class="dname">${esc(fullName(c))}</h2>
+    ${c.kana ? `<div class="dkana">${esc(c.kana)}</div>` : ''}
+    ${(c.title || c.dept) ? `<div class="dsub">${esc([c.dept, c.title].filter(Boolean).join('　'))}</div>` : ''}
+    ${c.org ? `<div class="dorg">${esc(c.org)}</div>` : ''}
+    <div class="memo">
+      <h4><span>📝 メモ</span>${c.memo ? '<button class="btn small ghost" data-act="edit">編集</button>' : ''}</h4>
+      ${c.memo ? `<div class="body">${esc(c.memo).replace(/^(［\d{4}\/\d{2}\/\d{2}］)/gm, '<span class="d">$1</span>')}</div>` : ''}
+      <div class="add">
+        <textarea id="memoInput" rows="1" placeholder="メモを追加…"></textarea>
+        <button class="btn primary" data-act="addmemo">追加</button>
+      </div>
+    </div>
+    ${rows ? `<dl class="dl">${rows}</dl>` : ''}
+    <div class="dacts">
+      <button class="btn" data-act="vcard">👤 連絡先に追加</button>
+      ${imgs.length ? `<button class="btn" data-act="shareimg">画像を書き出す</button>` : ''}
+      <button class="btn danger" data-act="delete">削除</button>
+    </div>
+    ${(c.ocrFront || c.ocrBack) ? `<details class="ocrraw"><summary>OCRの元テキスト</summary><pre>${esc([c.ocrFront, c.ocrBack].filter(Boolean).join('\n――― 裏面 ―――\n'))}</pre></details>` : ''}
+    <div class="dmeta">登録 ${fmtDT(c.createdAt)}　更新 ${fmtDT(c.updatedAt)}</div>`;
+  el.hidden = false;
+  if (innerWidth < 900) el.scrollTop = 0;
+}
+
+// 詳細画面からメモを追記（日付付き）。検索・同期・CSVの対象になる
+async function addMemo(id, text) {
+  text = (text || '').trim();
+  if (!text) { $('#memoInput')?.focus(); return; }
+  const c = S.cards.find((x) => x.id === id); if (!c) return;
+  const d = new Date(), stamp = `［${d.getFullYear()}/${pad2(d.getMonth() + 1)}/${pad2(d.getDate())}］`;
+  const now = Date.now();
+  const card = { ...c, memo: [c.memo, stamp + text].filter(Boolean).join('\n'), updatedAt: now, localEditAt: now };
+  delete card._idx;
+  await dbPut('cards', card);
+  S.cards = S.cards.map((x) => (x.id === id ? indexCard(card) : x));
+  renderList(); refreshDirty(true);
+  await showDetail(id);
+  toast('メモを追加しました');
+}
+async function deleteCard(id) {
+  const c = S.cards.find((x) => x.id === id); if (!c) return;
+  if (!(await confirmDlg('名刺を削除', `「${fullName(c)}」を削除します。\n次回の iCloud 保存で他の端末にも削除が反映されます。`, '削除', true))) return;
+  const now = Date.now();
+  // 個人情報は残さず、同期用の墓標だけを残す
+  await tx(['cards', 'images', 'thumbs'], 'readwrite', (s) => {
+    s.cards.put({ id, deleted: true, createdAt: c.createdAt, updatedAt: now, localEditAt: now });
+    s.images.delete(id); s.thumbs.delete(id);
+  });
+  dropThumb(id);
+  S.cards = S.cards.filter((x) => x.id !== id);
+  showDetail(null); renderAll(); refreshDirty(true);
+  toast('削除しました');
+}
+
+// ════════════════════════════════════════════════════════
+//   画像処理
+// ════════════════════════════════════════════════════════
+function blobToImage(blob) {
+  return new Promise((res, rej) => {
+    const u = URL.createObjectURL(blob); const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(u); res(img); };
+    img.onerror = () => { URL.revokeObjectURL(u); rej(new Error('画像を読み込めませんでした（HEIC形式の場合はSafariで開くか、JPEGで書き出してください）')); };
+    img.src = u;
+  });
+}
+const canvasToBlob = (c, type = 'image/jpeg', q = 0.85) => new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('画像の変換に失敗しました'))), type, q));
+async function resizeImage(blob, maxSide, q, rotate = 0) {
+  const img = await blobToImage(blob);
+  const w0 = img.naturalWidth, h0 = img.naturalHeight;
+  const s = Math.min(1, maxSide / Math.max(w0, h0));
+  const w = Math.round(w0 * s), h = Math.round(h0 * s);
+  const rot = ((rotate % 360) + 360) % 360;
+  const c = document.createElement('canvas');
+  c.width = rot % 180 ? h : w; c.height = rot % 180 ? w : h;
+  const x = c.getContext('2d');
+  x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+  x.translate(c.width / 2, c.height / 2); x.rotate((rot * Math.PI) / 180);
+  x.drawImage(img, -w / 2, -h / 2, w, h);
+  return canvasToBlob(c, 'image/jpeg', q);
+}
+// ── 保存用の圧縮（すべて端末内のcanvasで処理。外部には送信しない） ──
+// OCRは撮影直後の高解像度画像で行い、保存するのは縮小・圧縮した画像だけにする
+const IMG_PRESETS = {
+  small: { label: '小（約60KB・文字はやや粗い）', max: 1100, target: 60e3 },
+  std: { label: '標準（約120KB・おすすめ）', max: 1400, target: 120e3 },
+  large: { label: '大（約250KB・細かい文字も鮮明）', max: 1800, target: 250e3 },
+};
+let imgPreset = 'std';
+let _webp;
+async function webpSupported() {
+  if (_webp !== undefined) return _webp;
+  const c = document.createElement('canvas'); c.width = c.height = 2;
+  _webp = await new Promise((r) => c.toBlob((b) => r(!!b && b.type === 'image/webp'), 'image/webp', 0.8));
+  return _webp;
+}
+async function drawScaled(blob, maxSide, rotate = 0) {
+  const img = await blobToImage(blob);
+  const w0 = img.naturalWidth, h0 = img.naturalHeight;
+  const s = Math.min(1, maxSide / Math.max(w0, h0));
+  const w = Math.round(w0 * s), h = Math.round(h0 * s), rot = ((rotate % 360) + 360) % 360;
+  const c = document.createElement('canvas');
+  c.width = rot % 180 ? h : w; c.height = rot % 180 ? w : h;
+  const x = c.getContext('2d');
+  x.imageSmoothingQuality = 'high';
+  x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+  x.translate(c.width / 2, c.height / 2); x.rotate((rot * Math.PI) / 180);
+  x.drawImage(img, -w / 2, -h / 2, w, h);
+  return c;
+}
+// 目標サイズに収まるまで画質を段階的に下げる（WebP対応ブラウザはWebP、それ以外はJPEG）
+async function encodeToTarget(c, target, qMax = 0.82, qMin = 0.45) {
+  const type = (await webpSupported()) ? 'image/webp' : 'image/jpeg';
+  let best = null;
+  for (let q = qMax; q >= qMin - 1e-6; q -= 0.07) {
+    best = await canvasToBlob(c, type, q);
+    if (best.size <= target) break;
+  }
+  return best;
+}
+async function compressImage(blob, preset = imgPreset) {
+  const p = IMG_PRESETS[preset] || IMG_PRESETS.std;
+  return encodeToTarget(await drawScaled(blob, p.max), p.target);
+}
+const workImage = (blob, rotate = 0) => resizeImage(blob, 1800, 0.92, rotate); // OCR用（保存しない。検証で1800pxが最も精度が良かった）
+const makeThumb = async (blob) => encodeToTarget(await drawScaled(blob, 240), 14e3, 0.7, 0.4);
+const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(n / 1024)) + 'KB');
+const imgExt = (b) => (b?.type === 'image/webp' ? 'webp' : 'jpg');
+
+// OCR用の前処理（グレースケール＋コントラスト補正、小さい画像は拡大）
+async function prepForOcr(blob) {
+  const img = await blobToImage(blob);
+  const w0 = img.naturalWidth, h0 = img.naturalHeight, long = Math.max(w0, h0);
+  const s = long < 1800 ? 1800 / long : Math.min(1, 2400 / long);
+  const c = document.createElement('canvas'); c.width = Math.round(w0 * s); c.height = Math.round(h0 * s);
+  const x = c.getContext('2d', { willReadFrequently: true });
+  x.drawImage(img, 0, 0, c.width, c.height);
+  const d = x.getImageData(0, 0, c.width, c.height), p = d.data, n = p.length / 4, hist = new Uint32Array(256);
+  for (let i = 0; i < p.length; i += 4) { const g = (p[i] * 299 + p[i + 1] * 587 + p[i + 2] * 114) / 1000 | 0; p[i] = g; hist[g]++; }
+  let lo = 0, hi = 255, a = 0;
+  for (; lo < 254; lo++) { a += hist[lo]; if (a > n * 0.01) break; }
+  a = 0; for (; hi > lo + 1; hi--) { a += hist[hi]; if (a > n * 0.01) break; }
+  const k = 255 / Math.max(1, hi - lo);
+  for (let i = 0; i < p.length; i += 4) { let g = (p[i] - lo) * k; g = g < 0 ? 0 : g > 255 ? 255 : g; p[i] = p[i + 1] = p[i + 2] = g; }
+  x.putImageData(d, 0, 0);
+  return { blob: await canvasToBlob(c, 'image/png'), canvas: c };
+}
+
+// ════════════════════════════════════════════════════════
+//   OCR（Tesseract.js をこのサイト内のファイルから読み込み、端末内で実行）
+// ════════════════════════════════════════════════════════
+const OCR = { workers: {}, loading: {}, chain: Promise.resolve(), onProgress: null };
+function loadScript(src) {
+  return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = () => rej(new Error('OCRエンジンを読み込めませんでした')); document.head.appendChild(s); });
+}
+function simdSupported() {
+  try { return WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 10, 1, 8, 0, 65, 0, 253, 15, 253, 98, 11])); } catch { return false; }
+}
+// jpn: 本文用（日本語モデル単独の方が漢字の誤認識が少ない） / eng: メール・URLなど英数字行の読み直し用
+function getWorker(lang = 'jpn') {
+  if (OCR.workers[lang]) return Promise.resolve(OCR.workers[lang]);
+  OCR.loading[lang] ||= (async () => {
+    if (!window.Tesseract) await loadScript('vendor/tesseract/tesseract.min.js');
+    const base = new URL('vendor/tesseract/', location.href).href;
+    const w = await Tesseract.createWorker([lang], 1, {
+      workerPath: base + 'worker.min.js',
+      corePath: base + (simdSupported() ? 'tesseract-core-simd-lstm.wasm.js' : 'tesseract-core-lstm.wasm.js'),
+      langPath: base + 'lang',
+      workerBlobURL: false,
+      gzip: true,
+      logger: (m) => lang === 'jpn' && OCR.onProgress && OCR.onProgress(m),
+    });
+    // jpn: 11 = SPARSE_TEXT（文字の大きさや配置がばらばらな名刺に最も安定。3=自動は大きな文字を縦書きと誤認しやすい）
+    // eng: 7 = 1行として読む
+    await w.setParameters({ tessedit_pageseg_mode: lang === 'jpn' ? '11' : '7' });
+    OCR.workers[lang] = w;
+    return w;
+  })().catch((e) => { OCR.loading[lang] = null; throw e; });
+  return OCR.loading[lang];
+}
+// 1枚ずつ順番に処理
+function ocrImage(blob, onProgress) {
+  const job = OCR.chain.then(async () => {
+    OCR.onProgress = onProgress;
+    try {
+      const w = await getWorker('jpn');
+      const pre = await prepForOcr(blob);
+      onProgress && onProgress({ status: 'recognizing text', progress: 0 });
+      const { data } = await w.recognize(pre.blob, {}, { text: true, blocks: true });
+      const lines = mergeRows(extractLines(data)).filter((l) => !(l.conf < 35 && l.text.replace(/\s/g, '').length <= 3));
+      await refineAscii(lines, pre.canvas);
+      return lines;
+    } finally { OCR.onProgress = null; }
+  });
+  OCR.chain = job.catch(() => {});
+  return job;
+}
+function median(a) { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y); return s[Math.floor(s.length / 2)]; }
+function extractLines(data) {
+  const out = [];
+  for (const b of data.blocks || []) for (const p of b.paragraphs || []) for (const l of p.lines || []) {
+    const raw = (l.text || '').replace(/\n/g, ' ').trim();
+    if (!raw) continue;
+    const text = cleanLine(raw);
+    if (!text || !/[0-9A-Za-z぀-ヿ㐀-鿿]/.test(text)) continue;
+    const hs = (l.words || []).map((w) => w.bbox.y1 - w.bbox.y0).filter((h) => h > 0);
+    out.push({ raw, text, h: median(hs) || (l.bbox.y1 - l.bbox.y0), conf: l.confidence ?? 0, words: l.words || [], bbox: { ...l.bbox } });
+  }
+  if (!out.length && data.text) return textToLines(data.text);
+  return out;
+}
+// 同じ行の高さに並ぶ断片（例：「山田」「太郎」が広い空白で分かれたもの）を1行にまとめる
+function mergeRows(lines) {
+  const ls = lines.filter((l) => l.bbox).sort((a, b) => a.bbox.y0 - b.bbox.y0 || a.bbox.x0 - b.bbox.x0);
+  const out = [];
+  const bh = (x) => Math.max(1, x.bbox.y1 - x.bbox.y0);
+  for (const l of ls) {
+    const m = out.find((o) => {
+      const mn = Math.min(bh(o), bh(l)), mx = Math.max(bh(o), bh(l));
+      const overlap = Math.min(o.bbox.y1, l.bbox.y1) - Math.max(o.bbox.y0, l.bbox.y0);
+      const gap = Math.max(l.bbox.x0 - o.bbox.x1, o.bbox.x0 - l.bbox.x1);
+      return overlap > mn * 0.6 && mx / mn < 1.4 && gap > -mn * 0.3 && gap < mn * 2.6;
+    });
+    if (m) {
+      const [a, b] = l.bbox.x0 < m.bbox.x0 ? [l, m] : [m, l];
+      m.raw = a.raw + ' ” ' + b.raw; m.text = cleanLine(m.raw); m.words = [...a.words, ...b.words];
+      m.conf = Math.min(m.conf, l.conf); m.bbox = { x0: Math.min(m.bbox.x0, l.bbox.x0), y0: Math.min(m.bbox.y0, l.bbox.y0), x1: Math.max(m.bbox.x1, l.bbox.x1), y1: Math.max(m.bbox.y1, l.bbox.y1) };
+    } else out.push({ ...l });
+  }
+  return out.concat(lines.filter((l) => !l.bbox));
+}
+// メール・URL・英字の行だけ英語モデルで読み直す（日本語モデルは「.」「,」の取り違えが起きやすい）
+async function refineAscii(lines, canvas) {
+  const targets = lines.filter((l) => {
+    const t = l.text.replace(/\s/g, ''); if (t.length < 5) return false;
+    const ascii = (t.match(/[\x21-\x7e]/g) || []).length / t.length;
+    return /@|https?:|www\./i.test(t) || (ascii > 0.85 && /[A-Za-z]{3,}/.test(t) && !/^[〒T]?\d{3}-?\d{4}/.test(t));
+  });
+  if (!targets.length) return;
+  let w; try { w = await getWorker('eng'); } catch { return; }
+  for (const l of targets) {
+    const pad = Math.round(l.h * 0.35), b = l.bbox;
+    const x0 = Math.max(0, b.x0 - pad), y0 = Math.max(0, b.y0 - pad);
+    const cw = Math.min(canvas.width, b.x1 + pad) - x0, ch = Math.min(canvas.height, b.y1 + pad) - y0;
+    if (cw < 10 || ch < 6) continue;
+    const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+    c.getContext('2d').drawImage(canvas, x0, y0, cw, ch, 0, 0, cw, ch);
+    try {
+      const { data } = await w.recognize(await canvasToBlob(c, 'image/png'));
+      const t = cleanLine((data.text || '').replace(/\n/g, ' ').trim());
+      if (t && (data.confidence ?? 0) >= l.conf - 10 && /[A-Za-z0-9]/.test(t)) { l.raw = data.text.trim(); l.text = t; l.conf = data.confidence; }
+    } catch {}
+  }
+}
+const textToLines = (t) => String(t).split(/\r?\n/).map((raw) => ({ raw, text: cleanLine(raw, true), h: 0, conf: 100, words: [] })).filter((l) => l.text);
+
+// ════════════════════════════════════════════════════════
+//   名刺テキストの解析（所属・役職・専門科・名前の自動振り分け）
+// ════════════════════════════════════════════════════════
+const CJK = '\u3005\u3006\u3007\u303b\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff';
+const KANA = '\u3041-\u3096\u309d\u309e\u30a1-\u30fa\u30fc\u30fd\u30fe';
+const JA = CJK + KANA;
+const RE_JA_SPACE = new RegExp(`([${JA}・（(])\\s+(?=[${JA}・（）()])`, 'g');
+// keepSpaces: 貼り付けテキストは空白が正確なので残す。OCR結果は文字間に余分な空白が入るため除去し、
+//             全角スペース由来の「”」だけを区切りとして残す。
+function cleanLine(s, keepSpaces = false) {
+  s = String(s).normalize('NFKC');
+  if (!keepSpaces) s = s.replace(/\s*[”“]\s*/g, '\u0001');
+  s = s.replace(/[|｜_~^`"“”‘’]+/g, ' ')
+    .replace(/(\d)\s*[‐‑‒–—―−ー\-]\s*(?=\d)/g, '$1-');
+  if (!keepSpaces) s = s.replace(RE_JA_SPACE, '$1').replace(RE_JA_SPACE, '$1').replace(/\u0001/g, ' ');
+  s = s.replace(/\s*([（(])\s*/g, ' $1').replace(/\s*([）)])/g, '$1');
+  return s.replace(/\s{2,}/g, ' ').trim();
+}
+
+const PREF = '(?:北海道|東京都|京都府|大阪府|(?:青森|岩手|宮城|秋田|山形|福島|茨城|栃木|群馬|埼玉|千葉|神奈川|新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知|三重|滋賀|兵庫|奈良|和歌山|鳥取|島根|岡山|広島|山口|徳島|香川|愛媛|高知|福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|沖縄)県)';
+const RX = {
+  email: /[A-Za-z0-9._%+\-]+@[A-Za-z0-9\-]+(?:\.[A-Za-z0-9\-]+)+/,
+  url: /(?:https?:\/\/|www\.)[A-Za-z0-9.\-_~/?#=&%:+]+/i,
+  phone: /(?:\+81[\s\-]*(?:\(0\))?\s*\d{1,4}|\(?0\d{1,4}\)?)[\s\-]?\d{1,4}[\s\-]?\d{3,4}/g,
+  zip: /〒\s*\d{3}-?\d{4}|(?<![\d-])\d{3}-\d{4}(?![\d-])/,
+  pref: new RegExp(PREF + '(?!立)'),
+  addrNum: /\d|[一二三四五六七八九十]+(?:丁目|番|号)/,
+  addrTail: /(\d+[-‐]\d+|丁目|番地|\d+番|\d+号|ビル|階|\d+F\b|号館|棟|タワー)/,
+  city: /[一-龥]{1,5}[市区町村郡]/,
+  labels: /(?:TEL|Tel|tel|Phone|電話|ＴＥＬ|FAX|Fax|fax|ファックス|ファクス|E-?mail|e-?mail|Mail|mail|URL|Mobile|mobile|Cell|携帯|直通|代表|ダイヤルイン|PHS)\s*[:：.]?/g,
+  shortLabels: /(?:^|\s)[TFMEtfme]\s*[:：.]\s*/g,
+  org: /(大学院|大学|医学部|医学系|医学研究科|医科大学|附属|付属|病院|医院|クリニック|診療所|医療センター|研究所|研究センター|株式会社|有限会社|合同会社|\(株\)|\(有\)|医療法人|社会医療法人|社団法人|財団法人|社会福祉法人|独立行政法人|国立研究開発法人|機構|学会|協会|医師会|製薬|薬品|ファーマ|ホールディングス|事業団|保健所|市役所|県庁|厚生労働省|Hospital|University|Clinic|Institute|Inc\.?|Co\.,?|Ltd\.?|Corporation|K\.K\.)/i,
+  weakOrg: /(センター|Center|Centre)$/i,
+  qualLine: /(専門医|指導医|認定医|指導者|認定看護師|専門看護師|認定薬剤師|評議員|代議員|学会員|資格)/,
+  qualJa: /(医学博士|歯学博士|薬学博士|博士\s*\((?:医学|歯学|薬学)\)|医学修士)/g,
+  qualTok: /(?<![A-Za-z])(M\.?D\.?|Ph\.?D\.?|MBA|MPH|FACC|FACP|FACS|FJCS|FAHA|FESC|FRCP|RN|PharmD)(?![A-Za-z])/g,
+  romaji: /^[A-Z][A-Za-z'\-]+(?:\s+[A-Z]\.?)?\s+[A-Z][A-Za-z'\-]+$/,
+  romajiStop: /(University|Hospital|Department|Dept|Clinic|Center|Centre|Medical|Medicine|Inc|Ltd|Co\b|Corp|Professor|Director|Chief|Division|Graduate|School|Institute|Japan|Tokyo|Osaka|Kyoto|Faculty|Society|Prefecture|City|Building|Floor|Street|Avenue|Road)/i,
+  kana: /^[ぁ-ゖァ-ヺー\s]{3,}$/,
+};
+// 役職（長い順に照合）
+const TITLES = ['代表取締役社長', '代表取締役会長', '代表取締役', '取締役社長', '取締役', '執行役員', '社長', '副社長', '会長', '専務', '常務', '顧問', '相談役', '支店長', '営業所長', '本部長', '事業部長', 'グループリーダー', 'チームリーダー', 'マネージャー', 'マネジャー', 'ディレクター', 'リーダー', '課長補佐', '課長代理', '課長', '係長', '主任研究員', '研究員', '主任', '主査', '主幹', '室長', '副室長', '所長', '副所長', '事務長', '事務局長', '局長',
+  '名誉教授', '特任教授', '特命教授', '臨床教授', '客員教授', '主任教授', '病院教授', '特任准教授', '臨床准教授', '准教授', '助教授', '教授', '特任講師', '非常勤講師', '臨床講師', '病院講師', '講師', '特任助教', '助教', '助手', '学長', '副学長', '学部長', '研究科長', '研究科長補佐',
+  '名誉院長', '病院長', '副病院長', '副院長', '院長', '理事長', '副理事長', '理事', '監事', '名誉会長', 'センター長', '副センター長', '診療部長', '統括部長', '主任部長', '診療科長', '診療科部長', '副部長', '部長', '部長代理', '医長', '副医長', '医局長', '科長', '副科長', '診療局長',
+  '看護部長', '副看護部長', '看護師長', '副看護師長', '師長', '副師長', '主任看護師', '薬剤部長', '副薬剤部長', '薬局長', '技師長', '副技師長',
+  '専攻医', '専修医', '後期研修医', '初期研修医', '研修医', 'レジデント', 'フェロー', '医員', '常勤医', '非常勤医師', '嘱託医', '産業医'].sort((a, b) => b.length - a.length);
+const GENERIC_TITLES = ['歯科医師', '医師', '看護師', '薬剤師', '臨床検査技師', '診療放射線技師', '理学療法士', '作業療法士', '言語聴覚士', '管理栄養士', '臨床工学技士', '社会福祉士', '精神保健福祉士', '医療ソーシャルワーカー', 'MSW', 'MR'].sort((a, b) => b.length - a.length);
+const DEPT_GENERIC = new RegExp(`([${JA}・]{0,16}?(?:内科|外科|科))(?!大|学部|学科|研究|長|目|学会|学研|クリニック|医院|病院|診療所|・?クリニック)(学?(?:講座|教室|分野|部門)?)`, 'g');
+const DEPT_ALT = new RegExp(`[${JA}・]{0,10}?(?:薬剤部|看護部|検査部|放射線部|輸血部|栄養部|栄養管理部|リハビリテーション部|医療安全管理部|医療安全管理室|感染制御部|感染管理室|臨床工学部|事務部|医事課|地域医療連携室|地域連携室|医療連携室|患者支援センター|医療福祉相談室|手術部|病理部|救急部|集中治療部|総合診療部|健診センター|透析センター|内視鏡センター|がんセンター|救命救急センター|心臓病センター|脳卒中センター|周産期センター|消化器病センター)`, 'g');
+const DEPT_BAD = new Set(['科', '医科', '学科', '研究科', '診療科', '教科', '歯科医', '各科']);
+const ORG_SPLIT = /^.*(大学院|大学|医学部|医学系|研究科|附属|付属|病院|医院|クリニック|センター|研究所|株式会社|法人)/;
+const COMPANY_DEPT = /^[^\d@]{1,20}?(本部|事業部|部門|部|課|室|グループ|営業所|支店|支社|講座|教室|分野|ユニット|チーム)$/;
+
+// 姓の辞書（区切り判定用）
+const SURNAME_LONG = ['勅使河原', '武者小路', '小比類巻', '長宗我部', '佐々木', '長谷川', '五十嵐', '久保田', '小野寺', '小笠原', '佐久間', '大久保', '宇都宮', '長谷部', '東海林', '大和田', '小山田', '小野田', '小田切', '小早川', '西園寺', '伊集院', '大河内', '宇佐美', '美濃部', '日下部', '曽我部', '御手洗', '加賀美', '早乙女', '小田原', '小野塚', '大須賀', '木之下', '久保木', '小宮山', '二階堂', '大和久', '佐々田', '小松原', '阿久津', '我孫子', '左右田', '十河', '一ノ瀬', '一之瀬', '三ツ矢', '小日向', '上久保', '下河辺', '神宮寺', '寒河江'].sort((a, b) => b.length - a.length);
+const SURNAME2 = new Set(('佐藤 鈴木 高橋 田中 伊藤 渡辺 渡邊 渡邉 山本 中村 小林 加藤 吉田 山田 山口 松本 井上 木村 清水 山崎 阿部 森田 池田 橋本 山下 石川 中島 前田 藤田 後藤 小川 岡田 村上 近藤 石井 斎藤 齋藤 斉藤 齊藤 坂本 遠藤 藤井 青木 福田 三浦 西村 藤原 太田 松田 原田 岡本 中野 中川 小野 田村 竹内 金子 和田 中山 石田 上田 小島 柴田 宮崎 酒井 工藤 横山 宮本 内田 高木 安藤 島田 谷口 大野 高田 丸山 今井 河野 藤本 村田 武田 上野 杉山 増田 小山 大塚 平野 菅原 久保 松井 千葉 岩崎 桜井 櫻井 木下 野口 松尾 菊地 菊池 野村 新井 渡部 佐野 杉本 古川 浅野 市川 小松 中西 大西 西田 河合 永井 星野 北村 平田 川口 吉川 須藤 服部 松岡 岩田 中田 安田 吉村 樋口 秋山 中尾 荒木 小田 大橋 桑原 高野 小西 宮田 本田 飯田 内藤 早川 菅野 北川 吉岡 川村 松下 片山 富田 西川 山内 熊谷 長田 浜田 濱田 大石 河村 石原 小池 坂口 今村 山中 森本 杉田 土屋 稲垣 尾崎 宮下 長尾 植田 大谷 高山 野田 平井 小沢 小澤 髙橋 高嶋 高島 森下 森川 原口 関口 関根 堀内 堀江 堀田 西山 西尾 西岡 西本 北野 岡崎 岡部 谷川 沢田 澤田 島崎 畑中 牧野 柳田 柳沢 宮川 岩本 黒田 黒木 平山 角田 辻本 東條 南部 森山 林田 原口 泉谷 星 堤 椎名 菅 塚本 塚田 福島 福井 福本 福岡 藤岡 藤川 藤野 藤村 藤沢 藤澤 水野 水谷 宮内 宮原 宮沢 宮澤 三宅 三好 三上 三木 三谷 上原 上村 下田 下村 大島 大森 大川 大山 大村 大木 大竹 大城 大津 小原 小谷 小倉 川上 川崎 川田 川島 川端 川瀬 中谷 中原 中澤 中沢 中嶋 中井 中本 中條 永田 長野 長井 長島 長沼 新田 新谷 吉野 吉原 吉本 吉永 吉沢 吉澤 安達 安部 足立 荒井 荒川 有馬 飯塚 飯島 石塚 石橋 石黒 市村 井口 井出 今西 岩井 岩瀬 内山 梅田 梅原 榎本 及川 大内 大沢 大澤 奥田 奥村 尾形 緒方 片岡 加納 金井 金田 亀井 川原 北原 久野 熊田 栗原 黒川 小泉 河内 古賀 児玉 小西 小森 今野 紺野 斉木 坂井 坂田 佐伯 桜田 笹木 笹川 佐竹 里見 塩田 志村 白石 白井 新村 末松 菅谷 杉浦 関谷 高井 高岡 高瀬 高松 滝沢 竹田 竹中 竹下 田代 田口 立花 田辺 谷本 玉井 千田 土井 土田 筒井 寺田 寺島 徳永 戸田 豊田 中尾 仲村 成田 西野 西沢 根本 野崎 野中 萩原 橋口 長谷 畠山 花田 浜口 早坂 原 半田 東 樋田 平松 広瀬 廣瀬 福永 福原 古田 古谷 細川 細谷 堀 本間 前川 牧 増井 町田 松浦 松川 松永 松村 松山 丸田 三島 水口 溝口 南 宮地 村井 村松 望月 本村 森岡 八木 安井 柳 矢野 山岸 山根 山野 山村 湯浅 横田 横井 吉井 米田 若林 和泉 渡会').split(' ').filter((s) => s.length === 2));
+const SURNAME1 = new Set('林 森 原 関 辻 堀 東 西 南 北 岡 谷 沢 澤 泉 堤 菊 島 嶋 畑 浜 濱 角 星 牧 杉 柳 桜 宮 岩 黒 城 丹 李 金 朴 王 張 陳 劉 楊 黄 呉 崔 鄭 姜 趙 尹 韓 徐 孫 馬 胡 郭 何 高 林 梁 宋 鄧 許 曹 蔡'.split(' '));
+function splitName(full, gapAt = -1) {
+  full = (full || '').replace(/\s+/g, '');
+  const n = full.length;
+  if (gapAt > 0 && gapAt < n) return [full.slice(0, gapAt), full.slice(gapAt)];
+  if (n <= 1) return [full, ''];
+  if (n === 2) return [full[0], full[1]];
+  for (const s of SURNAME_LONG) if (n > s.length && full.startsWith(s)) return [s, full.slice(s.length)];
+  if (SURNAME2.has(full.slice(0, 2))) return [full.slice(0, 2), full.slice(2)];
+  if (SURNAME1.has(full[0])) return [full[0], full.slice(1)];
+  return [full.slice(0, 2), full.slice(2)];
+}
+// 文字間の空白（名刺は姓と名の間を空けることが多い）から区切り位置を推定
+function gapSplit(line, name) {
+  const chars = [];
+  for (const w of line.words || []) {
+    const syms = w.symbols?.length ? w.symbols : [{ text: w.text, bbox: w.bbox }];
+    for (const s of syms) {
+      const t = (s.text || '').normalize('NFKC').replace(/\s/g, ''); if (!t || !s.bbox) continue;
+      const step = (s.bbox.x1 - s.bbox.x0) / t.length;
+      for (let i = 0; i < t.length; i++) chars.push({ c: t[i], x0: s.bbox.x0 + step * i, x1: s.bbox.x0 + step * (i + 1) });
+    }
+  }
+  const off = chars.map((c) => c.c).join('').indexOf(name);
+  if (off < 0) return -1;
+  const seg = chars.slice(off, off + name.length);
+  if (seg.length < 3) return -1;
+  const gaps = []; for (let i = 1; i < seg.length; i++) gaps.push(seg[i].x0 - seg[i - 1].x1);
+  const avgW = seg.reduce((a, c) => a + (c.x1 - c.x0), 0) / seg.length;
+  let bi = 0; gaps.forEach((g, i) => { if (g > gaps[bi]) bi = i; });
+  const others = gaps.filter((_, i) => i !== bi);
+  const ref = Math.max(0, ...others);
+  return gaps[bi] > Math.max(ref * 1.8, ref + avgW * 0.25, avgW * 0.3) ? bi + 1 : -1;
+}
+// OCRで「.」が落ちたドメイン末尾（例: examplejp → example.jp / hospcojp → hosp.co.jp）を補正
+function fixEmail(e) {
+  e = e.replace(/[.,]+$/, '');
+  const [u, d] = e.split('@'); const ls = d.split('.'); const last = ls.pop();
+  const m = last.length > 3 && last.match(/^(.+?)(co|ac|or|ne|go|ed|lg|gr)?jp$/);
+  if (m) ls.push(m[1], ...(m[2] ? [m[2]] : []), 'jp'); else ls.push(last);
+  return u + '@' + ls.join('.');
+}
+// Tesseractは全角スペースを「”」として出力することがあるため、姓名の区切りの手がかりにする
+function quoteSplit(raw, name) {
+  const parts = String(raw || '').normalize('NFKC').split(/[”“"]|　/);
+  if (parts.length < 2) return -1;
+  for (let j = 0; j < parts.length - 1; j++) {
+    const a = parts.slice(0, j + 1).join('').replace(/\s+/g, ''), b = parts.slice(j + 1).join('').replace(/\s+/g, '');
+    for (let k = 1; k < name.length; k++) if (a.endsWith(name.slice(0, k)) && b.startsWith(name.slice(k))) return k;
+  }
+  return -1;
+}
+// 住所中の数字と漢字の間の余分な空白を詰める（〒番号の後ろは残す）
+const RE_ADDR_SP1 = new RegExp(`([${JA}])\\s+(?=[0-9])`, 'g'), RE_ADDR_SP2 = new RegExp(`([0-9])\\s+(?=[${JA}])`, 'g');
+function normAddr(s) {
+  const m = s.match(/^(〒?\s*\d{3}-?\d{4})\s*(.*)$/);
+  const body = (m ? m[2] : s).replace(RE_ADDR_SP1, '$1').replace(RE_ADDR_SP2, '$1');
+  return m ? (m[1] + ' ' + body).trim() : body;
+}
+const toDomestic = (s) => { let d = s.replace(/\(0\)/, '').replace(/[^\d+]/g, ''); if (d.startsWith('+81')) d = '0' + d.slice(3); return d.replace(/^00/, '0'); };
+const fmtPhone = (s) => s.replace(/\s+/g, '').replace(/[()]/g, (c) => (c === '(' ? '' : '-')).replace(/--+/g, '-').replace(/^-|-$/g, '');
+const trimSep = (s) => s.replace(/^[\s・,，、/|:：\-]+|[\s・,，、/|:：\-]+$/g, '').replace(/\s{2,}/g, ' ');
+
+function parseLines(lines) {
+  const r = {}; const add = (k, v, sep = ' / ') => { v = (v || '').trim(); if (!v) return; const cur = r[k] ? r[k].split(sep) : []; if (!cur.includes(v)) r[k] = [...cur, v].join(sep); };
+  const titles = [], generic = [], depts = [], orgs = [], centers = [], quals = [], names = [], romaji = [], compDepts = [];
+  let addrLine = -1;
+  const rests = lines.map((L, i) => {
+    let t = L.text;
+    // メール・URL
+    t = t.replace(/\s*[@＠]\s*/g, '@').replace(/(@[A-Za-z0-9.\-]+),(?=[A-Za-z]{2,})/g, '$1.');
+    const em = t.match(RX.email); if (em) { add('email', fixEmail(em[0])); t = t.replace(em[0], ' '); }
+    const u = t.match(RX.url); if (u) { r.url ||= u[0].replace(/[.,]+$/, ''); t = t.replace(u[0], ' '); }
+    // 電話・FAX・携帯
+    const zipM = t.match(RX.zip);
+    const phoneSrc = zipM ? t.replace(zipM[0], ' '.repeat(zipM[0].length)) : t;
+    const found = [];
+    for (const m of phoneSrc.matchAll(RX.phone)) {
+      const dig = toDomestic(m[0]); if (dig.length < 10 || dig.length > 11) continue;
+      const pre = phoneSrc.slice(Math.max(0, m.index - 12), m.index);
+      const kind = /fax|ファ[ック]?クス|(?:^|\s)f\s*[.:：]?\s*$/i.test(pre) && !/tel|電話/i.test(pre.slice(-6)) ? 'fax'
+        : (/携帯|mobile|cell|phs|(?:^|\s)m\s*[.:：]?\s*$/i.test(pre) || /^0[789]0/.test(dig)) ? 'mobile' : 'tel';
+      add(kind, fmtPhone(m[0])); found.push(m[0]);
+    }
+    for (const f of found) t = t.replace(f, ' ');
+    if (found.length) { const ext = t.match(/内線\s*[:：]?\s*(\d{2,6})/); if (ext) { r.tel = (r.tel || '') + ` (内線${ext[1]})`; t = t.replace(ext[0], ' '); } }
+    t = t.replace(RX.labels, ' ').replace(RX.shortLabels, ' ');
+    // 住所（〒だけの行の後に住所が続く場合は連結）
+    const isAddr = (zipM || (RX.pref.test(t) && RX.addrNum.test(t)) || (RX.city.test(t) && RX.addrTail.test(t) && !RX.org.test(t)));
+    if (addrLine >= 0 && i <= addrLine + 3 && isAddr && !zipM && /^〒?\s*\d{3}-?\d{4}$/.test(r.address || '')) {
+      r.address += ' ' + normAddr(trimSep(t)); addrLine = i; t = '';
+    } else if (addrLine < 0 && (zipM || (RX.pref.test(t) && RX.addrNum.test(t)) || (RX.city.test(t) && RX.addrTail.test(t) && !RX.org.test(t)))) {
+      add('address', normAddr(trimSep(t)), ' '); addrLine = i; t = '';
+    } else if (addrLine >= 0 && i === addrLine + 1 && RX.addrTail.test(t) && !RX.email.test(L.text) && t.length < 40 && !RX.org.test(t.replace(/ビル|タワー/g, ''))) {
+      r.address = (r.address + ' ' + normAddr(trimSep(t))).trim(); t = '';
+    }
+    return trimSep(t);
+  });
+
+  rests.forEach((t0, i) => {
+    let t = t0; if (!t) return;
+    const L = lines[i]; const hadTitle = [];
+    // 資格
+    t = t.replace(RX.qualJa, (m) => { quals.push(m.replace(/\s+/g, '')); return ' '; });
+    t = t.replace(RX.qualTok, (m) => { quals.push(m.replace(/\s+/g, '')); return ' '; });
+    if (RX.qualLine.test(t)) { quals.push(trimSep(t)); return; }
+    // 役職
+    for (const ti of TITLES) {
+      let idx;
+      while ((idx = t.indexOf(ti)) >= 0) {
+        if (t[idx + ti.length] === '会') break;
+        titles.push({ ti, pos: i * 1000 + idx }); hadTitle.push(ti);
+        t = t.slice(0, idx) + ' ' + t.slice(idx + ti.length);
+      }
+    }
+    for (const ti of GENERIC_TITLES) {
+      const idx = t.indexOf(ti);
+      const nx = t[idx + ti.length] || '', pv = t[idx - 1] || '';
+      if (idx >= 0 && /^[A-Z]+$/.test(ti) && (/[A-Za-z]/.test(nx) || /[A-Za-z]/.test(pv))) continue;
+      if (idx >= 0 && !/[会団部所局]/.test(nx) && (ti.length > 2 || t.replace(/\s/g, '').length <= 12)) { generic.push(ti); t = t.slice(0, idx) + ' ' + t.slice(idx + ti.length); }
+    }
+    // 専門科
+    const lineDepts = [];
+    for (const m of [...t.matchAll(DEPT_GENERIC)]) {
+      let d = m[1].replace(ORG_SPLIT, '').replace(/^・+/, '');
+      if (!d || DEPT_BAD.has(d) || /(医科|学科|研究科)$/.test(d) || d.length > 14) continue;
+      lineDepts.push(d); t = t.replace(d + m[2], ' ');
+    }
+    for (const m of [...t.matchAll(DEPT_ALT)]) {
+      const d = m[0].replace(ORG_SPLIT, '').replace(/^・+/, ''); if (!d) continue;
+      lineDepts.push(d); t = t.replace(d, ' ');
+    }
+    if (lineDepts.length) depts.push(lineDepts.join('・'));
+    t = trimSep(t.replace(/^学(講座|教室|分野)/, ''));
+    if (!t) return;
+    // 所属
+    if (RX.org.test(t)) { orgs.push(t); return; }
+    if (RX.weakOrg.test(t) && t.length > 3) { centers.push(t); return; }
+    // ふりがな・ローマ字
+    if (RX.kana.test(t) && t.replace(/\s/g, '').length >= 3) { r.kana ||= t.replace(/\s+/g, ' '); return; }
+    const t1 = t.split(/[,，]/)[0].trim();
+    if (RX.romaji.test(t1) && !RX.romajiStop.test(t1)) { romaji.push(t1); return; }
+    // 名前候補
+    const nm = t.replace(/\s+/g, '');
+    if (new RegExp(`^[${CJK}]{1,4}[${JA}]{1,5}$`).test(nm) && nm.length >= 2 && nm.length <= 8 &&
+        !/(病院|大学|医院|会|部|課|室|科|県|都|府|市|区|号|階|丁目|センター|株式|御中|様)$/.test(nm)) {
+      names.push({ nm, i, spaced: t.trim(), score: (L.h || 10) * (hadTitle.length ? 1.1 : 1) * (nm.length >= 3 && nm.length <= 5 ? 1.08 : 1) * (L.conf ? 0.6 + 0.4 * Math.min(1, L.conf / 85) : 1) });
+      return;
+    }
+    if (COMPANY_DEPT.test(t)) compDepts.push(t);
+  });
+
+  if (!orgs.length && centers.length) orgs.push(centers.shift());
+  if (!depts.length && centers.length) depts.push(centers.shift());
+  if (!depts.length && compDepts.length) depts.push(compDepts[0]);
+  if (orgs.length) r.org = [...new Set(orgs)].slice(0, 3).join(' ');
+  if (depts.length) r.dept = [...new Set(depts)].slice(0, 2).join(' / ');
+  const tt = [...new Set(titles.sort((a, b) => a.pos - b.pos).map((x) => x.ti))];
+  if (tt.length) r.title = tt.join('・'); else if (generic.length) r.title = [...new Set(generic)][0];
+  if (quals.length) r.quals = [...new Set(quals)].join(' / ');
+  if (romaji.length) r.nameEn = romaji[0];
+  if (names.length) {
+    names.sort((a, b) => b.score - a.score);
+    const best = names[0];
+    const sp = best.spaced.split(/\s+/);
+    let at = !lines[best.i].words.length && sp.length === 2 ? sp[0].length : quoteSplit(lines[best.i].raw, best.nm);
+    if (at < 0) at = gapSplit(lines[best.i], best.nm);
+    const [sei, mei] = splitName(best.nm, at);
+    r.sei = sei; r.mei = mei;
+  } else if (r.nameEn) {
+    const tk = r.nameEn.split(/\s+/).filter((x) => !/^[A-Z]\.?$/.test(x));
+    const capsIdx = tk.findIndex((x) => x.length > 1 && x === x.toUpperCase());
+    const si = capsIdx >= 0 ? capsIdx : tk.length - 1;
+    r.sei = tk[si]; r.mei = tk.filter((_, j) => j !== si).join(' ');
+  }
+  return r;
+}
+// 複数の読み取り結果（貼り付け → 表面 → 裏面 の優先順）を統合
+function parseCard(sources) {
+  const res = sources.filter((s) => s && s.length).map(parseLines);
+  const out = {};
+  for (const k of PARSE_KEYS) {
+    if (k === 'sei' || k === 'mei') continue;
+    for (const r of res) if (r[k]) { out[k] = r[k]; break; }
+  }
+  for (const r of res) if (r.sei) { out.sei = r.sei; out.mei = r.mei || ''; break; }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════
+//   追加・編集シート
+// ════════════════════════════════════════════════════════
+const ED = { card: null, img: { front: null, back: null }, orig: { front: null, back: null }, url: { front: null, back: null }, ocr: { front: null, back: null, paste: null }, job: { front: 0, back: 0 }, touched: new Set(), focus: null, imgChanged: false, busy: 0 };
+
+function buildFields() {
+  const mk = (f) => `<div class="f ${f.full ? 'full' : ''} ${f.key ? 'key' : ''}"><label for="f_${f.k}">${f.label}</label>${f.textarea
+    ? `<textarea id="f_${f.k}" data-k="${f.k}"></textarea>`
+    : `<input id="f_${f.k}" data-k="${f.k}" type="${f.type || 'text'}" autocomplete="off" ${f.type === 'email' || f.type === 'url' ? 'autocapitalize="off"' : ''}>`}</div>`;
+  $('#fieldsMain').innerHTML = FIELDS.filter((f) => f.grp === 'main').map(mk).join('');
+  $('#fieldsContact').innerHTML = FIELDS.filter((f) => f.grp === 'contact').map(mk).join('');
+  $('#fieldsMemo').innerHTML = FIELDS.filter((f) => f.grp === 'memo').map(mk).join('');
+  $$('#editor [data-k]').forEach((el) => {
+    el.addEventListener('input', () => { ED.touched.add(el.dataset.k); el.parentElement.classList.remove('auto'); });
+    el.addEventListener('focus', () => { ED.focus = el; });
+  });
+}
+const fld = (k) => $(`#editor [data-k="${k}"]`);
+function setField(k, v, auto = false) { const el = fld(k); if (!el) return; el.value = v || ''; el.parentElement.classList.toggle('auto', auto && !!v); }
+
+async function openEditor(card = null) {
+  ED.card = card; ED.touched = new Set(); ED.imgChanged = false; ED.focus = null;
+  ED.ocr = { front: null, back: null, paste: null };
+  ED.job.front++; ED.job.back++;
+  for (const side of ['front', 'back']) { ED.img[side] = null; ED.orig[side] = null; setSlot(side); }
+  for (const k of DATA_KEYS) setField(k, card ? card[k] : '');
+  if (!card) setField('metDate', today());
+  if (card) {
+    for (const k of DATA_KEYS) if (card[k]) ED.touched.add(k);
+    const im = await dbGet('images', card.id);
+    for (const side of ['front', 'back']) { ED.img[side] = im?.[side] || null; setSlot(side); }
+    if (card.ocrFront) ED.ocr.front = textToLines(card.ocrFront);
+    if (card.ocrBack) ED.ocr.back = textToLines(card.ocrBack);
+  }
+  renderOcrLines();
+  $('#edTitle').textContent = card ? '名刺を編集' : '名刺を追加';
+  $('#editor').hidden = false; $('#editor .panel').scrollTop = 0;
+  document.body.style.overflow = 'hidden';
+  if (!card) getWorker('jpn').then(() => getWorker('eng')).catch(() => {}); // OCRエンジンを先読み
+}
+function closeEditor() {
+  ED.job.front++; ED.job.back++; ED.orig = { front: null, back: null };
+  for (const s of ['front', 'back']) if (ED.url[s]) { URL.revokeObjectURL(ED.url[s]); ED.url[s] = null; }
+  $('#editor').hidden = true; document.body.style.overflow = '';
+}
+function setSlot(side, status) {
+  const slot = $(`.slot[data-side="${side}"]`); const b = ED.img[side];
+  if (ED.url[side]) { URL.revokeObjectURL(ED.url[side]); ED.url[side] = null; }
+  const pv = $('.pv', slot);
+  if (b) { ED.url[side] = URL.createObjectURL(b); pv.style.backgroundImage = `url("${ED.url[side]}")`; pv.textContent = ''; }
+  else { pv.style.backgroundImage = ''; pv.textContent = side === 'front' ? '未撮影' : '未撮影（なければ不要）'; }
+  slot.classList.toggle('has', !!b);
+  $('.ocrflag', slot).textContent = b ? `保存サイズ ${kb(b.size)}` : '';
+  $$('[data-act]', slot).forEach((x) => (x.hidden = !b));
+  if (status !== undefined) setStatus(side, status);
+  else if (!b) setStatus(side, '');
+}
+function setStatus(side, text, prog = null) {
+  const slot = $(`.slot[data-side="${side}"]`);
+  $('.st', slot).textContent = text || '';
+  $('.prog', slot).hidden = prog === null;
+  if (prog !== null) $('.prog i', slot).style.width = Math.round(prog * 100) + '%';
+}
+const STATUS_JA = { 'loading tesseract core': 'OCRエンジン準備中', 'initializing tesseract': '初期化中', 'loading language traineddata': '日本語辞書を読込中（初回のみ）', 'loading language traineddata (from cache)': '辞書を読込中', 'initializing api': '初期化中', 'recognizing text': '文字を読み取り中' };
+
+async function setImage(side, file, rotate = 0) {
+  const job = ++ED.job[side];
+  let counted = false;
+  try {
+    setStatus(side, '画像を処理中…', 0);
+    // 高解像度の作業用画像（OCR・回転用、メモリ上のみ）と、保存用の圧縮画像を作る
+    const work = await workImage(file, rotate);
+    const blob = await compressImage(work);
+    if (job !== ED.job[side]) return;
+    ED.orig[side] = work; ED.img[side] = blob; ED.imgChanged = true; ED.ocr[side] = null; setSlot(side, '読み取り待ち…');
+    ED.busy++; counted = true; updateSaveBtn();
+    const lines = await ocrImage(work, (m) => { if (job === ED.job[side]) setStatus(side, (STATUS_JA[m.status] || m.status) + '…', m.progress || 0); });
+    if (job !== ED.job[side]) return;
+    ED.ocr[side] = lines;
+    setStatus(side, lines.length ? `読み取り完了（${lines.length}行）` : '文字が見つかりませんでした。向きや明るさを確認してください');
+    applyParse(false); renderOcrLines();
+  } catch (e) {
+    console.error(e);
+    if (job === ED.job[side]) setStatus(side, '⚠ ' + (e.message || '読み取りに失敗しました'));
+  } finally { if (counted) ED.busy = Math.max(0, ED.busy - 1); updateSaveBtn(); }
+}
+function updateSaveBtn() { const t = ED.busy ? '読み取り中…' : '保存'; $('#edSave').textContent = t; }
+
+function applyParse(overwrite) {
+  const p = parseCard([ED.ocr.paste, ED.ocr.front, ED.ocr.back]);
+  let n = 0;
+  for (const k of PARSE_KEYS) {
+    if (!overwrite && ED.touched.has(k)) continue;
+    if (!overwrite && !p[k] && fld(k).value) continue;
+    setField(k, p[k] || '', true); if (p[k]) n++;
+    if (overwrite) ED.touched.delete(k);
+  }
+  return n;
+}
+function renderOcrLines() {
+  const all = [...(ED.ocr.paste || []), ...(ED.ocr.front || []), ...(ED.ocr.back || [])];
+  $('#ocrBox').hidden = !all.length;
+  $('#ocrLines').innerHTML = all.map((l) => `<button class="ln" data-line="${esc(l.text)}">${esc(l.text)}</button>`).join('');
+}
+
+async function saveEditor() {
+  if (ED.busy && !(await confirmDlg('読み取り中です', 'まだ文字の読み取りが終わっていません。このまま保存しますか？', '保存する'))) return;
+  const data = {};
+  for (const k of DATA_KEYS) data[k] = (fld(k).value || '').trim();
+  if (!data.sei && !data.mei && !data.org && !ED.img.front) { toast('名前・所属・画像のいずれかを入力してください'); return; }
+  const isNew = !ED.card;
+  let base = ED.card;
+  if (isNew && (data.sei || data.mei)) {
+    const dup = S.cards.find((c) => c.sei === data.sei && c.mei === data.mei);
+    if (dup) {
+      const ans = await dialog({
+        title: '同じ名前の名刺があります',
+        msg: `${fullName(dup)}\n${[dup.org, dup.dept, dup.title].filter(Boolean).join(' ')}\n登録 ${fmtDT(dup.createdAt)}`,
+        buttons: [
+          { label: '既存の名刺を新しい内容で更新（旧所属はメモに残す）', value: 'update', cls: 'primary' },
+          { label: '別の名刺として追加', value: 'new' },
+          { label: '戻る', value: 'back', cls: 'ghost' },
+        ],
+      });
+      if (!ans || ans === 'back') return;
+      if (ans === 'update') {
+        base = dup;
+        const old = [dup.org, dup.dept, dup.title].filter(Boolean).join(' ');
+        if (old && old !== [data.org, data.dept, data.title].filter(Boolean).join(' ')) data.memo = [data.memo, dup.memo, `［旧］${(dup.metDate || fmtDT(dup.createdAt).slice(0, 10))} ${old}`].filter(Boolean).join('\n');
+        else data.memo = [data.memo, dup.memo].filter(Boolean).join('\n');
+        if (!ED.img.front && !ED.img.back) { ED.imgChanged = false; }
+      }
+    }
+  }
+  const now = Date.now();
+  const card = {
+    ...(base || {}), ...data,
+    id: base?.id || uuid(),
+    createdAt: base?.createdAt || now, updatedAt: now, localEditAt: now, deleted: false,
+    hasFront: !!ED.img.front || (!ED.imgChanged && !!base?.hasFront),
+    hasBack: !!ED.img.back || (!ED.imgChanged && !!base?.hasBack),
+    ocrFront: ED.ocr.front ? ED.ocr.front.map((l) => l.text).join('\n') : (ED.imgChanged ? '' : base?.ocrFront || ''),
+    ocrBack: ED.ocr.back ? ED.ocr.back.map((l) => l.text).join('\n') : (ED.imgChanged ? '' : base?.ocrBack || ''),
+  };
+  delete card._idx;
+  const thumb = ED.imgChanged && ED.img.front ? await makeThumb(ED.img.front) : null;
+  await tx(['cards', 'images', 'thumbs'], 'readwrite', (s) => {
+    s.cards.put(card);
+    if (ED.imgChanged) {
+      if (ED.img.front || ED.img.back) s.images.put({ id: card.id, front: ED.img.front, back: ED.img.back });
+      else s.images.delete(card.id);
+      if (thumb) s.thumbs.put({ id: card.id, blob: thumb }); else s.thumbs.delete(card.id);
+    }
+  });
+  if (ED.imgChanged) dropThumb(card.id);
+  S.cards = S.cards.filter((c) => c.id !== card.id); S.cards.push(indexCard(card));
+  closeEditor(); renderAll(); refreshDirty(true);
+  showDetail(card.id);
+  toast(isNew && base === ED.card ? '登録しました' : '更新しました');
+  requestPersist(false);
+}
+
+// ════════════════════════════════════════════════════════
+//   バックアップ（iCloud Drive）— 1ファイルに文字情報と画像をまとめる
+//   形式: "MEISHI01" | u32 前置部長 | 前置部JSON | u32 本体長 | 本体(JSON or 暗号) | 画像データ…
+// ════════════════════════════════════════════════════════
+const MAGIC = 'MEISHI01';
+const BACKUP_NAME = '名刺データ.meishi';
+const enc8 = (s) => new TextEncoder().encode(s);
+const dec8 = (b) => new TextDecoder().decode(b);
+const u32 = (n) => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, n, true); return b; };
+const b64 = (u8) => btoa(String.fromCharCode(...u8));
+const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+const PBKDF2_ITER = 600000;
+async function deriveKey(pw, salt, iter) {
+  const base = await crypto.subtle.importKey('raw', enc8(pw), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: iter, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+async function encBytes(key, data) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, data));
+  const out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12); return out;
+}
+async function decBytes(key, data) {
+  const u = new Uint8Array(data);
+  return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: u.slice(0, 12) }, key, u.slice(12)));
+}
+
+// enc: null（暗号化なし） または getEncKey() が返す { key, salt, iter }
+async function buildBackup(enc) {
+  const cards = await dbAll('cards');
+  const key = enc?.key || null;
+  const encInfo = enc ? { alg: 'AES-256-GCM', kdf: 'PBKDF2-SHA256', iter: enc.iter, salt: enc.salt } : null;
+  const parts = []; let off = 0; const out = [];
+  for (const c of cards) {
+    const { localEditAt, _idx, ...rec } = c;
+    if (!c.deleted) {
+      const [im, th] = await Promise.all([dbGet('images', c.id), dbGet('thumbs', c.id)]);
+      rec.img = {};
+      for (const [k, b] of [['front', im?.front], ['back', im?.back], ['thumb', th?.blob]]) {
+        if (!b) continue;
+        const part = key ? new Blob([await encBytes(key, new Uint8Array(await b.arrayBuffer()))]) : b;
+        rec.img[k] = { off, len: part.size, type: b.type || 'image/jpeg' };
+        parts.push(part); off += part.size;
+      }
+    }
+    out.push(rec);
+  }
+  let body = enc8(JSON.stringify({ cards: out }));
+  if (key) body = await encBytes(key, body);
+  const prelude = enc8(JSON.stringify({ format: 'meishi-backup', version: 1, exportedAt: new Date().toISOString(), count: cards.filter((c) => !c.deleted).length, enc: encInfo }));
+  return new Blob([enc8(MAGIC), u32(prelude.length), prelude, u32(body.length), body, ...parts], { type: 'application/octet-stream' });
+}
+
+async function readBackup(file) {
+  const head = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  if (dec8(head.slice(0, 8)) !== MAGIC) throw new Error('名刺データのファイルではありません');
+  const dv = (u8) => new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  const pl = dv(head).getUint32(8, true);
+  const prelude = JSON.parse(dec8(await file.slice(12, 12 + pl).arrayBuffer()));
+  const p = 12 + pl;
+  const bl = dv(new Uint8Array(await file.slice(p, p + 4).arrayBuffer())).getUint32(0, true);
+  const dataStart = p + 4 + bl;
+  let key = null;
+  let bodyBytes = new Uint8Array(await file.slice(p + 4, dataStart).arrayBuffer());
+  if (prelude.enc) {
+    const saved = await getStoredKey();
+    if (saved && saved.salt === prelude.enc.salt) {
+      try { bodyBytes = await decBytes(saved.key, bodyBytes); key = saved.key; } catch {}
+    }
+    while (!key) {
+      const pw = await askPassword(false); if (pw === null) return null;
+      try {
+        const k = await deriveKey(pw, unb64(prelude.enc.salt), prelude.enc.iter);
+        bodyBytes = await decBytes(k, bodyBytes); key = k;
+        // 他の端末と同じ鍵をこの端末にも記憶 → 以後は保存・読み込みともパスワード入力不要
+        if (!saved) { await storeKey({ key: k, salt: prelude.enc.salt, iter: prelude.enc.iter }); S.encrypt = true; await metaSet('encrypt', true); }
+      } catch { toast('パスワードが違います'); }
+    }
+  }
+  const { cards } = JSON.parse(dec8(bodyBytes));
+  const getBlob = async (ref) => {
+    const buf = await file.slice(dataStart + ref.off, dataStart + ref.off + ref.len).arrayBuffer();
+    return new Blob([key ? await decBytes(key, buf) : buf], { type: ref.type || 'image/jpeg' });
+  };
+  return { prelude, cards, getBlob };
+}
+
+async function importBackup(file) {
+  const st = { added: 0, updated: 0, deleted: 0, same: 0 };
+  const bk = await readBackup(file); if (!bk) return null;
+  toast('読み込み中…', 60000);
+  for (const rc of bk.cards) {
+    if (!rc || !rc.id) continue;
+    const local = await dbGet('cards', rc.id);
+    if (local && (local.updatedAt || 0) >= (rc.updatedAt || 0)) { st.same++; continue; }
+    const { img, ...card } = rc; card.localEditAt = 0;
+    if (card.deleted) {
+      await tx(['cards', 'images', 'thumbs'], 'readwrite', (s) => { s.cards.put(card); s.images.delete(card.id); s.thumbs.delete(card.id); });
+      dropThumb(card.id); if (local && !local.deleted) st.deleted++;
+      continue;
+    }
+    const front = img?.front ? await bk.getBlob(img.front) : null;
+    const back = img?.back ? await bk.getBlob(img.back) : null;
+    const thumb = img?.thumb ? await bk.getBlob(img.thumb) : (front ? await makeThumb(front) : null);
+    await tx(['cards', 'images', 'thumbs'], 'readwrite', (s) => {
+      s.cards.put(card);
+      if (front || back) s.images.put({ id: card.id, front, back }); else s.images.delete(card.id);
+      if (thumb) s.thumbs.put({ id: card.id, blob: thumb }); else s.thumbs.delete(card.id);
+    });
+    dropThumb(card.id);
+    if (local && !local.deleted) st.updated++; else st.added++;
+  }
+  await loadAll(); await refreshDirty();
+  if (S.sel && !S.cards.some((c) => c.id === S.sel)) showDetail(null); else if (S.sel) showDetail(S.sel);
+  return st;
+}
+
+// 保存（iPhone: 共有シート→「ファイルに保存」 / Mac Chrome: 指定ファイルに直接上書き / その他: ダウンロード）
+let pendingFile = null;
+async function exportNow(pickNew = false) {
+  const enc = await getEncKey(true);
+  if (enc === false) return; // パスワード入力をキャンセル
+  const btn = $('#btnExport'); btn.disabled = true; btn.textContent = '準備中…';
+  try {
+    const blob = await buildBackup(enc);
+    const file = new File([blob], BACKUP_NAME, { type: 'application/octet-stream' });
+    if (window.showSaveFilePicker && !isIOS) {
+      let h = pickNew ? null : await metaGet('fileHandle');
+      if (h && (await h.requestPermission({ mode: 'readwrite' })) !== 'granted') h = null;
+      if (!h) {
+        h = await window.showSaveFilePicker({ suggestedName: BACKUP_NAME, types: [{ description: '名刺データ', accept: { 'application/octet-stream': ['.meishi'] } }] });
+        await metaSet('fileHandle', h);
+      }
+      const w = await h.createWritable(); await w.write(blob); await w.close();
+      await markExported(); toast(`「${h.name}」に保存しました`); renderLinked();
+      return;
+    }
+    if (isIOS && navigator.canShare && navigator.canShare({ files: [file] })) {
+      pendingFile = file;
+      try { await navigator.share({ files: [file] }); pendingFile = null; await markExported(); toast('保存しました'); }
+      catch (e) {
+        if (e.name === 'NotAllowedError') { $('#shareReady').hidden = false; showSaveBar('ready'); } // 準備に時間がかかった場合はもう一度タップで共有
+        else if (e.name !== 'AbortError') throw e;
+      }
+      return;
+    }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = BACKUP_NAME;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    await markExported(); toast('ダウンロードしました');
+  } catch (e) {
+    if (e.name !== 'AbortError') { console.error(e); toast('保存に失敗しました：' + (e.message || e)); }
+  } finally { btn.disabled = false; btn.textContent = 'iCloud Drive に保存'; }
+}
+async function markExported() { S.lastExport = Date.now(); await metaSet('lastExportAt', S.lastExport); hideSaveBar(); await refreshDirty(); renderSyncStats(); }
+
+// ── ワンタップ保存 ──────────────────────────────────
+// iPhoneの共有シートは「タップした瞬間」にしか開けないため、変更のたびに保存ファイルを
+// 裏で作っておき、タップと同時に渡す。（ファイルは端末内で作るだけで、どこにも送信しない）
+const QS = { file: null, ver: -1, timer: 0, busy: false };
+function shareMode() { return isIOS && !!navigator.canShare; }
+function schedulePrebuild() { QS.file = null; clearTimeout(QS.timer); QS.timer = setTimeout(prebuild, 700); }
+async function prebuild() {
+  if (!shareMode() || !dirtyCount()) return;
+  if (QS.busy) { schedulePrebuild(); return; }
+  const ver = S.dataVer; QS.busy = true;
+  try {
+    const enc = await getEncKey(false);
+    if (enc === undefined) return; // 暗号化ONでパスワード未記憶 → タップ時に入力してもらう
+    const f = new File([await buildBackup(enc)], BACKUP_NAME, { type: 'application/octet-stream' });
+    if (ver === S.dataVer && navigator.canShare({ files: [f] })) { QS.file = f; QS.ver = ver; }
+  } catch (e) { console.warn(e); }
+  finally { QS.busy = false; if (ver !== S.dataVer) schedulePrebuild(); }
+}
+function quickSave() {
+  if (pendingFile) { sharePending(); return; }
+  if (shareMode() && QS.file && QS.ver === S.dataVer) {
+    navigator.share({ files: [QS.file] })
+      .then(async () => { await markExported(); toast('iCloudに保存しました'); })
+      .catch((e) => { if (e.name !== 'AbortError') toast('保存できませんでした：' + e.message); });
+    return;
+  }
+  exportNow(false);
+}
+async function sharePending() {
+  if (!pendingFile) return;
+  try { await navigator.share({ files: [pendingFile] }); pendingFile = null; $('#shareReady').hidden = true; await markExported(); toast('iCloudに保存しました'); }
+  catch (e) { if (e.name !== 'AbortError') toast('共有できませんでした：' + e.message); }
+}
+function showSaveBar(mode) {
+  $('#saveBarText').textContent = mode === 'ready' ? '保存の準備ができました' : `未保存の変更 ${dirtyCount()}件`;
+  $('#saveBarBtn').textContent = mode === 'ready' ? '保存する' : 'iCloudに保存';
+  $('#saveBar').hidden = false; document.body.classList.add('bar-on');
+}
+function hideSaveBar() { $('#saveBar').hidden = true; document.body.classList.remove('bar-on'); }
+
+// ── 暗号化キーの記憶（パスワードそのものではなく、取り出し不可の鍵だけを端末内に保存） ──
+async function getStoredKey() { try { return (await metaGet('encKey')) || S.encKeyMem || null; } catch { return S.encKeyMem || null; } }
+async function storeKey(k) { S.encKeyMem = k; try { await metaSet('encKey', k); } catch {} renderEncInfo(); }
+// 戻り値: null=暗号化しない / {key,salt,iter} / undefined=未記憶（interactive=false時） / false=キャンセル
+async function getEncKey(interactive) {
+  if (!S.encrypt) return null;
+  const saved = await getStoredKey(); if (saved) return saved;
+  if (!interactive) return undefined;
+  const pw = await askPassword(true); if (pw === null) return false;
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const k = { key: await deriveKey(pw, salt, PBKDF2_ITER), salt: b64(salt), iter: PBKDF2_ITER };
+  await storeKey(k);
+  return k;
+}
+async function renderEncInfo() { $('#encKeyInfo').hidden = !(S.encrypt && (await getStoredKey())); }
+async function renderLinked() {
+  if (!window.showSaveFilePicker || isIOS) return;
+  const h = await metaGet('fileHandle');
+  $('#btnExportPick').hidden = false;
+  $('#linkedFile').hidden = !h; $('#btnImportLinked').hidden = !h;
+  if (h) $('#linkedFile').textContent = `保存先：${h.name}（次回からこのファイルに直接上書きします）`;
+}
+async function imageTotals() {
+  let n = 0, bytes = 0;
+  for (const r of await dbAll('images')) for (const k of ['front', 'back']) if (r[k]) { n++; bytes += r[k].size; }
+  for (const t of await dbAll('thumbs')) if (t.blob) bytes += t.blob.size;
+  return { n, bytes };
+}
+// 保存済みの画像を現在の設定で再圧縮（端末内で処理）
+async function shrinkAll() {
+  const p = IMG_PRESETS[imgPreset];
+  const recs = await dbAll('images');
+  const before = (await imageTotals()).bytes;
+  const btn = $('#btnShrink'); btn.disabled = true;
+  let done = 0, changed = 0;
+  try {
+    for (const r of recs) {
+      btn.textContent = `縮小中… ${++done}/${recs.length}`;
+      const out = { ...r }; let mod = false;
+      for (const k of ['front', 'back']) {
+        if (!r[k] || r[k].size <= p.target * 1.15) continue;
+        const nb = await compressImage(r[k]);
+        if (nb.size < r[k].size) { out[k] = nb; mod = true; }
+      }
+      const th = await dbGet('thumbs', r.id);
+      const nt = out.front ? await makeThumb(out.front) : null;
+      await tx(['images', 'thumbs'], 'readwrite', (s) => {
+        if (mod) s.images.put(out);
+        if (nt && (!th?.blob || nt.size < th.blob.size)) s.thumbs.put({ id: r.id, blob: nt });
+      });
+      if (mod) { changed++; dropThumb(r.id); }
+    }
+    const after = (await imageTotals()).bytes;
+    toast(`${changed}件の名刺の画像を縮小しました（${kb(before)} → ${kb(after)}）`, 5000);
+    renderList(); if (S.sel) showDetail(S.sel);
+  } finally { btn.disabled = false; btn.textContent = '保存済みの画像も縮小する'; renderSyncStats(); schedulePrebuild(); }
+}
+async function renderSyncStats() {
+  $('#optImg').innerHTML = Object.entries(IMG_PRESETS).map(([k, v]) => `<option value="${k}" ${k === imgPreset ? 'selected' : ''}>${v.label}</option>`).join('');
+  imageTotals().then(({ n, bytes }) => { $('#stImg').textContent = n ? `${n}枚・${kb(bytes)}（1枚平均 ${kb(bytes / n)}）` : 'なし'; }).catch(() => {});
+  $('#stCount').textContent = S.cards.length;
+  $('#stLast').textContent = fmtDT(S.lastExport);
+  $('#stDirty').textContent = dirtyCount();
+  try {
+    const e = await navigator.storage?.estimate?.(); if (e) $('#stUsage').textContent = (e.usage / 1048576).toFixed(1) + ' MB';
+    const p = await navigator.storage?.persisted?.(); $('#stPersist').textContent = p ? '有効' : '未設定'; $('#btnPersist').hidden = !!p;
+  } catch {}
+}
+async function requestPersist(ui) {
+  try { const ok = await navigator.storage?.persist?.(); if (ui) toast(ok ? '有効にしました' : 'このブラウザでは設定できませんでした（ホーム画面に追加すると保護されます）'); } catch {}
+  if (ui) renderSyncStats();
+}
+async function openSync() {
+  $('#shareReady').hidden = true;
+  $('#howtoIOS').hidden = !isIOS;
+  $('#howtoMac').hidden = isIOS || !!window.showSaveFilePicker;
+  $('#optEncrypt').checked = !!S.encrypt; renderEncInfo();
+  $('#syncSheet').hidden = false; document.body.style.overflow = 'hidden';
+  renderSyncStats(); renderLinked();
+}
+async function doImport(file) {
+  try {
+    const st = await importBackup(file);
+    if (!st) return;
+    toast(`読み込み完了：追加 ${st.added}・更新 ${st.updated}・削除 ${st.deleted}・変更なし ${st.same}`, 5000);
+    await refreshDirty(true); // この端末だけの変更が残っていれば保存を促す
+    renderSyncStats();
+  } catch (e) { console.error(e); toast('読み込みに失敗しました：' + (e.message || e), 5000); }
+}
+
+// CSV・vCard
+function csvExport() {
+  const cols = [['sei', '姓'], ['mei', '名'], ['kana', 'ふりがな'], ['nameEn', 'ローマ字'], ['org', '所属'], ['dept', '専門科・部署'], ['title', '役職'], ['quals', '資格'], ['tel', '電話'], ['mobile', '携帯'], ['fax', 'FAX'], ['email', 'メール'], ['address', '住所'], ['url', 'URL'], ['metDate', '交換日'], ['metPlace', '場所・イベント'], ['memo', 'メモ']];
+  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = [cols.map((c) => q(c[1])).join(','), ...filtered().map((c) => cols.map(([k]) => q(c[k])).join(','))];
+  saveSmall(new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv' }), `名刺一覧_${today()}.csv`);
+}
+function vcard(c) {
+  const e = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/([,;])/g, '\\$1');
+  const L = ['BEGIN:VCARD', 'VERSION:3.0', `N:${e(c.sei)};${e(c.mei)};;;`, `FN:${e(fullName(c))}`];
+  if (c.kana) { const [a, b = ''] = c.kana.split(/\s+/); L.push(`X-PHONETIC-LAST-NAME:${e(a)}`, `X-PHONETIC-FIRST-NAME:${e(b)}`); }
+  if (c.org || c.dept) L.push(`ORG:${e(c.org)};${e(c.dept)}`);
+  if (c.title) L.push(`TITLE:${e(c.title)}`);
+  for (const t of (c.tel || '').split(' / ').filter(Boolean)) L.push(`TEL;TYPE=WORK,VOICE:${e(t)}`);
+  for (const t of (c.mobile || '').split(' / ').filter(Boolean)) L.push(`TEL;TYPE=CELL:${e(t)}`);
+  for (const t of (c.fax || '').split(' / ').filter(Boolean)) L.push(`TEL;TYPE=WORK,FAX:${e(t)}`);
+  for (const t of (c.email || '').split(' / ').filter(Boolean)) L.push(`EMAIL;TYPE=INTERNET,WORK:${e(t)}`);
+  if (c.address) L.push(`ADR;TYPE=WORK:;;${e(c.address)};;;;`);
+  if (c.url) L.push(`URL:${e(c.url)}`);
+  const note = [c.quals, c.metDate && `交換日 ${c.metDate}`, c.metPlace, c.memo].filter(Boolean).join('\n');
+  if (note) L.push(`NOTE:${e(note)}`);
+  L.push('END:VCARD');
+  return L.join('\r\n');
+}
+async function saveSmall(blob, name) {
+  const file = new File([blob], name, { type: blob.type });
+  if (isIOS && navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file] }); } catch (e) { if (e.name !== 'AbortError') toast('共有できませんでした'); } return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+}
+
+// ════════════════════════════════════════════════════════
+//   イベント
+// ════════════════════════════════════════════════════════
+function bind() {
+  buildFields();
+  if (!isTouch) {
+    $$('.touch-only').forEach((x) => (x.hidden = true));
+    $$('.slot .pick').forEach((x) => (x.firstChild.textContent = '🖼 画像を選択（ドロップ可）'));
+  }
+
+  $('#q').addEventListener('input', (e) => { S.q = e.target.value; renderList(); });
+  $('#sort').addEventListener('change', (e) => { S.sort = e.target.value; try { localStorage.setItem('meishi_sort', S.sort); } catch {} renderList(); });
+  $('#chips').addEventListener('click', (e) => { const c = e.target.closest('.chip'); if (!c) return; S.dept = c.dataset.dept; renderChips(); renderList(); });
+  $('#list').addEventListener('click', (e) => { const r = e.target.closest('.row'); if (r) showDetail(r.dataset.id); });
+  $('#btnAdd').addEventListener('click', () => openEditor());
+  $('#btnSync').addEventListener('click', openSync);
+  $('#bannerBtn').addEventListener('click', quickSave);
+  $('#saveBarBtn').addEventListener('click', quickSave);
+  $('#saveBarClose').addEventListener('click', hideSaveBar);
+
+  $('#detail').addEventListener('click', async (e) => {
+    const v = e.target.closest('[data-view]');
+    if (v) { const vw = $('#viewer'); $('img', vw).src = v.src; vw.hidden = false; return; }
+    const a = e.target.closest('[data-act]'); if (!a) return;
+    const c = S.cards.find((x) => x.id === S.sel); if (!c) return;
+    if (a.dataset.act === 'back') showDetail(null);
+    if (a.dataset.act === 'edit') openEditor(c);
+    if (a.dataset.act === 'delete') deleteCard(c.id);
+    if (a.dataset.act === 'addmemo') addMemo(c.id, $('#memoInput').value);
+    if (a.dataset.act === 'vcard') saveSmall(new Blob([vcard(c)], { type: 'text/vcard' }), `${(c.sei || '') + (c.mei || '') || 'contact'}.vcf`);
+    if (a.dataset.act === 'shareimg') {
+      const im = await dbGet('images', c.id); const nm = (c.sei || '') + (c.mei || '') || '名刺';
+      const files = [im?.front && new File([im.front], `${nm}_表.${imgExt(im.front)}`, { type: im.front.type || 'image/jpeg' }), im?.back && new File([im.back], `${nm}_裏.${imgExt(im.back)}`, { type: im.back.type || 'image/jpeg' })].filter(Boolean);
+      if (isIOS && navigator.canShare?.({ files })) { try { await navigator.share({ files }); } catch {} }
+      else for (const f of files) await saveSmall(f, f.name);
+    }
+  });
+  $('#detail').addEventListener('keydown', (e) => {
+    if (e.target.id === 'memoInput' && e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); addMemo(S.sel, e.target.value); }
+  });
+  $('#detail').addEventListener('input', (e) => {
+    if (e.target.id === 'memoInput') { e.target.style.height = 'auto'; e.target.style.height = Math.min(180, e.target.scrollHeight + 2) + 'px'; }
+  });
+  $('#viewer').addEventListener('click', () => { $('#viewer').hidden = true; $('#viewer img').src = ''; });
+
+  // 編集シート
+  $$('#editor [data-close]').forEach((b) => b.addEventListener('click', async () => {
+    if ((ED.imgChanged || ED.touched.size > (ED.card ? DATA_KEYS.filter((k) => ED.card[k]).length : 0)) && !(await confirmDlg('編集を破棄', '入力内容を保存せずに閉じますか？', '破棄する', true))) return;
+    closeEditor();
+  }));
+  $('#edSave').addEventListener('click', saveEditor);
+  $('#edSave2').addEventListener('click', saveEditor);
+  $$('.slot').forEach((slot) => {
+    const side = slot.dataset.side;
+    $$('input[type=file]', slot).forEach((inp) => inp.addEventListener('change', () => { const f = inp.files[0]; inp.value = ''; if (f) setImage(side, f); }));
+    $('[data-act="rotate"]', slot).addEventListener('click', () => { const src = ED.orig[side] || ED.img[side]; if (src) setImage(side, src, 90); });
+    $('[data-act="remove"]', slot).addEventListener('click', () => { ED.job[side]++; ED.img[side] = null; ED.orig[side] = null; ED.ocr[side] = null; ED.imgChanged = true; setSlot(side); renderOcrLines(); });
+    slot.addEventListener('dragover', (e) => { e.preventDefault(); slot.classList.add('drag'); });
+    slot.addEventListener('dragleave', () => slot.classList.remove('drag'));
+    slot.addEventListener('drop', (e) => { e.preventDefault(); slot.classList.remove('drag'); const f = [...e.dataTransfer.files].find((x) => x.type.startsWith('image/')); if (f) setImage(side, f); });
+  });
+  $('#btnSplit').addEventListener('click', () => {
+    const full = (fld('sei').value + fld('mei').value).replace(/\s+/g, ''); if (full.length < 2) return;
+    let k = fld('sei').value.replace(/\s+/g, '').length + 1; if (k >= full.length) k = 1;
+    setField('sei', full.slice(0, k)); setField('mei', full.slice(k)); ED.touched.add('sei'); ED.touched.add('mei');
+  });
+  $('#ocrLines').addEventListener('mousedown', (e) => e.preventDefault()); // 入力欄のフォーカスを保つ
+  $('#ocrLines').addEventListener('click', (e) => {
+    const b = e.target.closest('.ln'); if (!b) return;
+    const el = ED.focus; if (!el) { toast('先に入力したい欄をタップしてください'); return; }
+    const k = el.dataset.k; const v = b.dataset.line;
+    if (k === 'sei' || k === 'mei') {
+      const nm = v.replace(/\s+/g, '');
+      const [s, m] = /\s/.test(v.trim()) && v.trim().split(/\s+/).length === 2 ? v.trim().split(/\s+/) : splitName(nm);
+      setField('sei', s); setField('mei', m); ED.touched.add('sei'); ED.touched.add('mei');
+    } else { el.value = el.value && k === 'memo' ? el.value + '\n' + v : v; ED.touched.add(k); el.parentElement.classList.remove('auto'); }
+    toast(`「${v.slice(0, 16)}」を入力しました`, 1200);
+  });
+  $('#btnReapply').addEventListener('click', async () => {
+    if (!(await confirmDlg('読み取り結果で上書き', '手入力した内容も、読み取り結果で置き換えます。', '上書き'))) return;
+    applyParse(true);
+  });
+  $('#btnPaste').addEventListener('click', async () => {
+    const t = await dialog({
+      title: 'テキストを貼り付け', msg: '名刺の文字を貼り付けると、項目に自動で振り分けます。\n（iPhone：写真を開いて文字を長押し →「すべてを選択」→「コピー」）',
+      body: `<div class="f"><textarea id="pasteText" style="min-height:160px"></textarea></div>`, row: true,
+      buttons: [{ label: 'キャンセル', value: null }, { label: '振り分け', cls: 'primary', value: () => $('#pasteText').value }],
+    });
+    if (!t || !t.trim()) return;
+    ED.ocr.paste = textToLines(t);
+    for (const k of PARSE_KEYS) if (!fld(k).value) ED.touched.delete(k);
+    applyParse(false); renderOcrLines(); toast('振り分けました（入力済みの欄はそのまま）');
+  });
+
+  // バックアップ
+  $$('#syncSheet [data-close]').forEach((b) => b.addEventListener('click', () => { $('#syncSheet').hidden = true; document.body.style.overflow = ''; }));
+  $('#optEncrypt').addEventListener('change', async (e) => {
+    S.encrypt = e.target.checked; await metaSet('encrypt', S.encrypt);
+    if (S.encrypt && !(await getStoredKey())) {
+      const k = await getEncKey(true);
+      if (!k) { S.encrypt = false; e.target.checked = false; await metaSet('encrypt', false); }
+      else toast('パスワードをこの端末に記憶しました');
+    }
+    renderEncInfo(); schedulePrebuild();
+  });
+  $('#btnForgetKey').addEventListener('click', async () => {
+    if (!(await confirmDlg('パスワードの記憶を消す', '次回の保存時にパスワードを入力し直します（新しいパスワードにもできます）。', '消す'))) return;
+    S.encKeyMem = null; await tx('meta', 'readwrite', (s) => s.delete('encKey')); renderEncInfo(); schedulePrebuild();
+  });
+  $('#btnExport').addEventListener('click', quickSave);
+  $('#btnExportPick').addEventListener('click', () => exportNow(true));
+  $('#btnShareNow').addEventListener('click', sharePending);
+  $('#importFile').addEventListener('change', async (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) doImport(f); });
+  $('#btnImportLinked').addEventListener('click', async () => {
+    const h = await metaGet('fileHandle'); if (!h) return;
+    if ((await h.requestPermission({ mode: 'read' })) !== 'granted') return;
+    doImport(await h.getFile());
+  });
+  $('#btnCsv').addEventListener('click', csvExport);
+  $('#optImg').addEventListener('change', (e) => { imgPreset = e.target.value; metaSet('imgPreset', imgPreset); toast('次に撮影する画像から適用されます'); });
+  $('#btnShrink').addEventListener('click', async () => {
+    if (await confirmDlg('保存済みの画像を縮小', `「${IMG_PRESETS[imgPreset].label}」に合わせて、保存済みの画像を縮小します。元の大きさには戻せません。\n（文字情報には影響しません）`, '縮小する')) shrinkAll();
+  });
+  $('#btnPersist').addEventListener('click', () => requestPersist(true));
+  $('#btnWipe').addEventListener('click', async () => {
+    const t = await dialog({
+      title: 'すべて消去', msg: 'この端末の名刺データと画像をすべて消去します。元に戻せません。\n確認のため「消去」と入力してください。',
+      body: `<div class="f"><input id="wipeConfirm" autocomplete="off"></div>`, row: true,
+      buttons: [{ label: 'キャンセル', value: null }, { label: '消去する', cls: 'danger', value: () => $('#wipeConfirm').value }],
+    });
+    if (t !== '消去') { if (t !== null) toast('入力が一致しないため中止しました'); return; }
+    await tx(['cards', 'images', 'thumbs', 'meta'], 'readwrite', (s) => { s.cards.clear(); s.images.clear(); s.thumbs.clear(); s.meta.clear(); });
+    S.thumbs.forEach((u) => URL.revokeObjectURL(u)); S.thumbs.clear();
+    showDetail(null); await loadAll(); await refreshDirty(); renderSyncStats(); toast('消去しました');
+  });
+
+  // キーボード（Mac）
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      if (!$('#viewer').hidden) { $('#viewer').hidden = true; return; }
+      if (!$('#syncSheet').hidden) { $('#syncSheet').hidden = true; document.body.style.overflow = ''; return; }
+      if ($('#editor').hidden && S.sel && innerWidth < 900) showDetail(null);
+    }
+    if (e.key === '/' && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && $('#editor').hidden) { e.preventDefault(); $('#q').focus(); }
+  });
+}
+
+// ════════════════════════════════════════════════════════
+//   起動
+// ════════════════════════════════════════════════════════
+(async function init() {
+  try { S.sort = localStorage.getItem('meishi_sort') || 'new'; } catch {}
+  $('#sort').value = S.sort;
+  bind();
+  try { imgPreset = (await metaGet('imgPreset')) || 'std'; S.encrypt = !!(await metaGet('encrypt')); await loadAll(); await refreshDirty(); }
+  catch (e) { console.error(e); $('#list').innerHTML = `<div class="empty">データベースを開けませんでした。<br>プライベートブラウズでは使用できません。</div>`; }
+  if (innerWidth >= 900) showDetail(null);
+  if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
