@@ -1,30 +1,28 @@
 // 名刺管理 Service Worker
 // アプリ本体とOCRエンジンをキャッシュしてオフライン動作させる。
 // 個人データ（名刺情報・画像）は一切扱わない（IndexedDB にのみ存在）。
-const VERSION = 'meishi-v1';
+const VERSION = 'meishi-v2';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icons/icon-180.png', './icons/icon-192.png', './icons/icon-512.png'];
-const ENGINE = [
-  './vendor/tesseract/tesseract.min.js',
-  './vendor/tesseract/worker.min.js',
-  './vendor/tesseract/tesseract-core-simd-lstm.wasm.js',
-  './vendor/tesseract/tesseract-core-lstm.wasm.js',
-  './vendor/tesseract/lang/jpn.traineddata.gz',
-  './vendor/tesseract/lang/eng.traineddata.gz',
-];
+// OCRエンジン（vendor/ 以下）は大きいので、初めて使ったときに保存する（下の fetch 処理）
 
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {
     const c = await caches.open(VERSION);
     await c.addAll(SHELL);
-    // OCRエンジンは大きいので個別に取得（失敗しても初回OCR時に再取得される）
-    await Promise.all(ENGINE.map((u) => c.add(u).catch(() => {})));
     self.skipWaiting();
   })());
 });
 
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k !== VERSION) await caches.delete(k);
+    // 古い版のキャッシュから、OCRエンジンなど今も使うファイルを引き継いでから削除（再ダウンロードを避ける）
+    const cur = await caches.open(VERSION);
+    for (const k of await caches.keys()) {
+      if (k === VERSION) continue;
+      const old = await caches.open(k);
+      for (const req of await old.keys()) if (new URL(req.url).pathname.includes('/vendor/') && !(await cur.match(req))) await cur.put(req, await old.match(req));
+      await caches.delete(k);
+    }
     await self.clients.claim();
   })());
 });

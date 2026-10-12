@@ -9,7 +9,8 @@ Mac と iPhone の両方で検索・閲覧でき、データは iCloud Drive 上
 |---|---|
 | `index.html` | アプリ本体（**個人情報は含まない**。仕組みだけ） |
 | `sw.js` / `manifest.webmanifest` / `icons/` | ホーム画面アプリ化・オフライン動作用 |
-| `vendor/tesseract/` | OCRエンジン（Tesseract.js v7・日本語/英語辞書）。CDNを使わず同梱 |
+| `vendor/ppocr/` | 高精度OCR（PaddleOCR PP-OCRv5 mobile ＋ ONNX Runtime Web 1.22）。既定のエンジン。CDNを使わず同梱 |
+| `vendor/tesseract/` | 軽量OCR（Tesseract.js v7）。高精度OCRが動かない端末での予備 |
 
 名刺データ・画像は **各端末の IndexedDB** と、自分で保存する **iCloud Drive の `名刺データ.meishi`** にだけ存在します。
 
@@ -61,6 +62,7 @@ iPhone のカメラ・ホーム画面アプリ化には **HTTPS で配信**す�
 
 ## 既知の制限
 
+- OCRは PaddleOCR PP-OCRv5（日本語対応・Apache-2.0）を端末内で実行します。テスト用名刺8枚・59項目で正解率100%（従来のTesseractは85%）。設定（☁︎ →「文字の読み取り（OCR）」）で軽量版に切り替え可能。
 - OCR精度は撮影条件に左右されます（真上から・明るく・名刺を画面いっぱいに）。毛筆体や装飾フォント、縦書き名刺は苦手です。保存前に確認・修正してください。
 - iPhone の写真ライブラリの HEIC は Safari では読めますが、Mac の Chrome では読めません（Safari を使うか JPEG で）。
 - 画像は保存時に縮小・圧縮（標準：長辺1400px・約120KB以下、対応ブラウザではWebP）。OCRは縮小前の画像で行うため精度は落ちません。設定（☁︎ →「画像の保存サイズ」）で小／標準／大を選べ、保存済みの画像もあとから縮小できます。圧縮はすべて端末内のcanvasで処理し、外部には送信しません。

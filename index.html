@@ -342,6 +342,16 @@ dialog .dbtns.row2 .btn{flex:1}
     </div>
 
     <div class="card">
+      <h3>文字の読み取り（OCR）</h3>
+      <div class="hint">どちらもこの端末の中だけで動作し、画像を外部に送信しません。初回のみOCRエンジンを読み込みます（高精度：約33MB／軽量：約13MB）。</div>
+      <div class="f" style="margin-top:8px"><select id="optOcr" style="width:100%;border:1px solid var(--line);background:#fff;border-radius:9px;padding:9px 10px;font-size:15px">
+        <option value="pp">高精度（PaddleOCR・おすすめ）</option>
+        <option value="ts">軽量（Tesseract）</option>
+      </select></div>
+      <div class="hint" id="ocrNote" style="margin-top:6px"></div>
+    </div>
+
+    <div class="card">
       <h3>画像の保存サイズ</h3>
       <div class="hint">文字の読み取りは撮影したままの高画質で行い、保存する画像だけを縮小します（処理はすべてこの端末内）。</div>
       <div class="f" style="margin-top:8px"><select id="optImg" style="width:100%;border:1px solid var(--line);background:#fff;border-radius:9px;padding:9px 10px;font-size:15px"></select></div>
@@ -773,7 +783,8 @@ async function compressImage(blob, preset = imgPreset) {
   const p = IMG_PRESETS[preset] || IMG_PRESETS.std;
   return encodeToTarget(await drawScaled(blob, p.max), p.target);
 }
-const workImage = (blob, rotate = 0) => resizeImage(blob, 1800, 0.92, rotate); // OCR用（保存しない。検証で1800pxが最も精度が良かった）
+// OCR用の作業画像（保存しない）。検証で最も精度が良かった解像度：PaddleOCR=2400px / Tesseract=1800px
+const workImage = (blob, rotate = 0) => resizeImage(blob, ocrEngine() === 'pp' ? 2400 : 1800, 0.92, rotate);
 const makeThumb = async (blob) => encodeToTarget(await drawScaled(blob, 240), 14e3, 0.7, 0.4);
 const kb = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + 'MB' : Math.max(1, Math.round(n / 1024)) + 'KB');
 const imgExt = (b) => (b?.type === 'image/webp' ? 'webp' : 'jpg');
@@ -829,9 +840,70 @@ function getWorker(lang = 'jpn') {
   })().catch((e) => { OCR.loading[lang] = null; throw e; });
   return OCR.loading[lang];
 }
+// ── 高精度OCR（PaddleOCR PP-OCRv5）— 専用Workerで端末内実行 ──
+const PP = { worker: null, ready: null, seq: 0, jobs: new Map(), onProgress: null, failed: false };
+function ppReady() {
+  if (PP.ready) return PP.ready;
+  PP.ready = new Promise((resolve, reject) => {
+    let w;
+    try { w = new Worker('vendor/ppocr/ppocr-worker.mjs', { type: 'module' }); } catch (e) { reject(e); return; }
+    PP.worker = w;
+    w.onmessage = (e) => {
+      const m = e.data;
+      if (m.type === 'ready') resolve(w);
+      else if (m.type === 'progress') { const j = m.id ? PP.jobs.get(m.id) : null; (j?.onProgress || PP.onProgress)?.(m); }
+      else if (m.type === 'result' || m.type === 'error') {
+        if (!m.id) { reject(new Error(m.message)); return; }
+        const j = PP.jobs.get(m.id); if (!j) return; PP.jobs.delete(m.id);
+        m.type === 'result' ? j.resolve(m) : j.reject(new Error(m.message));
+      }
+    };
+    w.onerror = (e) => reject(new Error(e.message || '高精度OCRを起動できませんでした'));
+    w.postMessage({ type: 'init' });
+  });
+  PP.ready.catch(() => { PP.ready = null; PP.worker?.terminate(); PP.worker = null; });
+  return PP.ready;
+}
+async function ppInputs(blob) {
+  const img = await blobToImage(blob);
+  const w0 = img.naturalWidth, h0 = img.naturalHeight;
+  let s = 736 / Math.min(w0, h0); if (Math.max(w0, h0) * s > 1600) s = 1600 / Math.max(w0, h0);
+  const W = Math.max(32, Math.round((w0 * s) / 32) * 32), H = Math.max(32, Math.round((h0 * s) / 32) * 32);
+  const grab = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; const x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingQuality = 'high'; x.drawImage(img, 0, 0, w, h); const d = x.getImageData(0, 0, w, h); return { width: w, height: h, data: d.data }; };
+  return { det: grab(W, H), full: grab(w0, h0) };
+}
+async function ppOcr(blob, onProgress) {
+  PP.onProgress = (m) => onProgress?.({ status: m.stage === 'init' ? 'pp init' : 'pp load', progress: m.p });
+  const w = await ppReady();
+  onProgress?.({ status: 'recognizing text', progress: 0 });
+  const { det, full } = await ppInputs(blob);
+  const id = ++PP.seq;
+  const res = await new Promise((resolve, reject) => {
+    PP.jobs.set(id, { resolve, reject, onProgress: (m) => onProgress?.({ status: 'recognizing text', progress: m.p }) });
+    w.postMessage({ type: 'ocr', id, det, full }, [det.data.buffer, full.data.buffer]);
+  });
+  return res.lines.map((l) => ({ raw: l.text, text: cleanLine(l.text, true), h: l.bbox.y1 - l.bbox.y0, conf: Math.round(l.score * 100), words: [], bbox: l.bbox, pp: true }))
+    .filter((l) => l.text);
+}
+
+// 読み取りエンジン：'pp' = PaddleOCR（高精度・既定） / 'ts' = Tesseract（軽量）
+let ocrEnginePref = 'pp';
+function ocrEngine() { return ocrEnginePref === 'pp' && !PP.failed ? 'pp' : 'ts'; }
+function preloadOcr() { (ocrEngine() === 'pp' ? ppReady() : getWorker('jpn').then(() => getWorker('eng'))).catch(() => {}); }
+
 // 1枚ずつ順番に処理
 function ocrImage(blob, onProgress) {
   const job = OCR.chain.then(async () => {
+    if (ocrEngine() === 'pp') {
+      try {
+        const lines = await ppOcr(blob, onProgress);
+        return mergeRows(lines).filter((l) => !(l.conf < 35 && l.text.replace(/\s/g, '').length <= 3));
+      } catch (e) {
+        // 古い端末などで起動できない場合は軽量OCRに切り替える
+        console.warn(e); PP.failed = true;
+        toast('高精度OCRを起動できないため、軽量OCRで読み取ります', 4000);
+      }
+    }
     OCR.onProgress = onProgress;
     try {
       const w = await getWorker('jpn');
@@ -874,7 +946,7 @@ function mergeRows(lines) {
     });
     if (m) {
       const [a, b] = l.bbox.x0 < m.bbox.x0 ? [l, m] : [m, l];
-      m.raw = a.raw + ' ” ' + b.raw; m.text = cleanLine(m.raw); m.words = [...a.words, ...b.words];
+      m.raw = a.raw + ' ” ' + b.raw; m.text = cleanLine(m.raw, !!m.pp); m.words = [...a.words, ...b.words];
       m.conf = Math.min(m.conf, l.conf); m.bbox = { x0: Math.min(m.bbox.x0, l.bbox.x0), y0: Math.min(m.bbox.y0, l.bbox.y0), x1: Math.max(m.bbox.x1, l.bbox.x1), y1: Math.max(m.bbox.y1, l.bbox.y1) };
     } else out.push({ ...l });
   }
@@ -1016,9 +1088,9 @@ function quoteSplit(raw, name) {
 // 住所中の数字と漢字の間の余分な空白を詰める（〒番号の後ろは残す）
 const RE_ADDR_SP1 = new RegExp(`([${JA}])\\s+(?=[0-9])`, 'g'), RE_ADDR_SP2 = new RegExp(`([0-9])\\s+(?=[${JA}])`, 'g');
 function normAddr(s) {
-  const m = s.match(/^(〒?\s*\d{3}-?\d{4})\s*(.*)$/);
-  const body = (m ? m[2] : s).replace(RE_ADDR_SP1, '$1').replace(RE_ADDR_SP2, '$1');
-  return m ? (m[1] + ' ' + body).trim() : body;
+  const m = s.match(/^〒?\s*(\d{3})-?(\d{4})\s*(.*)$/);
+  const body = (m ? m[3] : s).replace(RE_ADDR_SP1, '$1').replace(RE_ADDR_SP2, '$1');
+  return m ? (`〒${m[1]}-${m[2]} ` + body).trim() : body;
 }
 const toDomestic = (s) => { let d = s.replace(/\(0\)/, '').replace(/[^\d+]/g, ''); if (d.startsWith('+81')) d = '0' + d.slice(3); return d.replace(/^00/, '0'); };
 const fmtPhone = (s) => s.replace(/\s+/g, '').replace(/[()]/g, (c) => (c === '(' ? '' : '-')).replace(/--+/g, '-').replace(/^-|-$/g, '');
@@ -1030,6 +1102,8 @@ function parseLines(lines) {
   let addrLine = -1;
   const rests = lines.map((L, i) => {
     let t = L.text;
+    // 〒がテ・亍・= などに誤認識された場合を補正
+    t = t.replace(/^[テ亍=T〒]\s*(?=\d{3}-?\d{4}(?![\d-]))/, '〒');
     // メール・URL
     t = t.replace(/\s*[@＠]\s*/g, '@').replace(/(@[A-Za-z0-9.\-]+),(?=[A-Za-z]{2,})/g, '$1.');
     const em = t.match(RX.email); if (em) { add('email', fixEmail(em[0])); t = t.replace(em[0], ' '); }
@@ -1188,7 +1262,7 @@ async function openEditor(card = null) {
   $('#edTitle').textContent = card ? '名刺を編集' : '名刺を追加';
   $('#editor').hidden = false; $('#editor .panel').scrollTop = 0;
   document.body.style.overflow = 'hidden';
-  if (!card) getWorker('jpn').then(() => getWorker('eng')).catch(() => {}); // OCRエンジンを先読み
+  if (!card) preloadOcr(); // OCRエンジンを先読み
 }
 function closeEditor() {
   ED.job.front++; ED.job.back++; ED.orig = { front: null, back: null };
@@ -1213,7 +1287,7 @@ function setStatus(side, text, prog = null) {
   $('.prog', slot).hidden = prog === null;
   if (prog !== null) $('.prog i', slot).style.width = Math.round(prog * 100) + '%';
 }
-const STATUS_JA = { 'loading tesseract core': 'OCRエンジン準備中', 'initializing tesseract': '初期化中', 'loading language traineddata': '日本語辞書を読込中（初回のみ）', 'loading language traineddata (from cache)': '辞書を読込中', 'initializing api': '初期化中', 'recognizing text': '文字を読み取り中' };
+const STATUS_JA = { 'pp load': '高精度OCRを準備中（初回のみ・約33MB）', 'pp init': 'OCRを起動中', 'loading tesseract core': 'OCRエンジン準備中', 'initializing tesseract': '初期化中', 'loading language traineddata': '日本語辞書を読込中（初回のみ）', 'loading language traineddata (from cache)': '辞書を読込中', 'initializing api': '初期化中', 'recognizing text': '文字を読み取り中' };
 
 async function setImage(side, file, rotate = 0) {
   const job = ++ED.job[side];
@@ -1563,7 +1637,12 @@ async function shrinkAll() {
     renderList(); if (S.sel) showDetail(S.sel);
   } finally { btn.disabled = false; btn.textContent = '保存済みの画像も縮小する'; renderSyncStats(); schedulePrebuild(); }
 }
+function renderOcrNote() {
+  $('#optOcr').value = ocrEnginePref;
+  $('#ocrNote').textContent = PP.failed && ocrEnginePref === 'pp' ? '⚠ この端末では高精度OCRを起動できなかったため、軽量OCRを使用しています。' : '';
+}
 async function renderSyncStats() {
+  renderOcrNote();
   $('#optImg').innerHTML = Object.entries(IMG_PRESETS).map(([k, v]) => `<option value="${k}" ${k === imgPreset ? 'selected' : ''}>${v.label}</option>`).join('');
   imageTotals().then(({ n, bytes }) => { $('#stImg').textContent = n ? `${n}枚・${kb(bytes)}（1枚平均 ${kb(bytes / n)}）` : 'なし'; }).catch(() => {});
   $('#stCount').textContent = S.cards.length;
@@ -1899,6 +1978,7 @@ function bind() {
   $('#btnCsv').addEventListener('click', () => csvExport(false));
   $('#btnCsvAll').addEventListener('click', () => csvExport(true));
   $('#csvFile').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) csvImport(f); });
+  $('#optOcr').addEventListener('change', (e) => { ocrEnginePref = e.target.value; PP.failed = false; metaSet('ocrEngine', ocrEnginePref); renderOcrNote(); toast('次に撮影する名刺から適用されます'); });
   $('#optImg').addEventListener('change', (e) => { imgPreset = e.target.value; metaSet('imgPreset', imgPreset); toast('次に撮影する画像から適用されます'); });
   $('#btnShrink').addEventListener('click', async () => {
     if (await confirmDlg('保存済みの画像を縮小', `「${IMG_PRESETS[imgPreset].label}」に合わせて、保存済みの画像を縮小します。元の大きさには戻せません。\n（文字情報には影響しません）`, '縮小する')) shrinkAll();
@@ -1934,7 +2014,7 @@ function bind() {
   try { S.sort = localStorage.getItem('meishi_sort') || 'new'; } catch {}
   $('#sort').value = S.sort;
   bind();
-  try { imgPreset = (await metaGet('imgPreset')) || 'std'; S.encrypt = !!(await metaGet('encrypt')); await loadAll(); await refreshDirty(); }
+  try { ocrEnginePref = (await metaGet('ocrEngine')) || 'pp'; imgPreset = (await metaGet('imgPreset')) || 'std'; S.encrypt = !!(await metaGet('encrypt')); await loadAll(); await refreshDirty(); }
   catch (e) { console.error(e); $('#list').innerHTML = `<div class="empty">データベースを開けませんでした。<br>プライベートブラウズでは使用できません。</div>`; }
   if (innerWidth >= 900) showDetail(null);
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(() => {});
