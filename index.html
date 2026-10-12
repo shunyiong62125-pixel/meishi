@@ -350,9 +350,14 @@ dialog .dbtns.row2 .btn{flex:1}
     </div>
 
     <div class="card">
-      <h3>その他の書き出し</h3>
+      <h3>CSV（Excel・他の名刺アプリ）</h3>
+      <div class="hint">文字情報だけをCSVでやり取りします（画像は含みません）。読み込みは、このアプリで書き出したCSVのほか、Eight・Sansan・Excelで作った表にも対応します（列名から自動で判別）。</div>
       <div class="btns">
-        <button class="btn" id="btnCsv">CSV（表示中の名刺・Excel用・画像なし）</button>
+        <button class="btn" id="btnCsvAll">CSVに書き出し（全件）</button>
+        <button class="btn" id="btnCsv">表示中の名刺だけ書き出し</button>
+      </div>
+      <div class="btns">
+        <label class="btn primary">CSVから読み込み<input type="file" id="csvFile" hidden></label>
       </div>
     </div>
 
@@ -1592,11 +1597,162 @@ async function doImport(file) {
 }
 
 // CSV・vCard
-function csvExport() {
-  const cols = [['sei', '姓'], ['mei', '名'], ['kana', 'ふりがな'], ['nameEn', 'ローマ字'], ['org', '所属'], ['dept', '専門科・部署'], ['title', '役職'], ['quals', '資格'], ['tel', '電話'], ['mobile', '携帯'], ['fax', 'FAX'], ['email', 'メール'], ['address', '住所'], ['url', 'URL'], ['metDate', '交換日'], ['metPlace', '場所・イベント'], ['memo', 'メモ']];
-  const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  const lines = [cols.map((c) => q(c[1])).join(','), ...filtered().map((c) => cols.map(([k]) => q(c[k])).join(','))];
-  saveSmall(new Blob(['\ufeff' + lines.join('\r\n')], { type: 'text/csv' }), `名刺一覧_${today()}.csv`);
+// ════════════════════════════════════════════════════════
+//   CSV 書き出し・読み込み（文字情報のみ。処理はすべて端末内）
+// ════════════════════════════════════════════════════════
+const CSV_COLS = [['id', 'ID'], ['sei', '姓'], ['mei', '名'], ['kana', 'ふりがな'], ['nameEn', 'ローマ字'], ['org', '所属'], ['dept', '専門科・部署'], ['title', '役職'], ['quals', '資格'], ['tel', '電話'], ['mobile', '携帯'], ['fax', 'FAX'], ['email', 'メール'], ['address', '住所'], ['url', 'URL'], ['metDate', '交換日'], ['metPlace', '場所・イベント'], ['memo', 'メモ'], ['createdAt', '登録日時'], ['updatedAt', '更新日時']];
+function csvExport(all = false) {
+  const rows = all ? [...S.cards].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)) : filtered();
+  if (!rows.length) { toast('書き出す名刺がありません'); return; }
+  // Excelで数式として解釈されないよう、=や@で始まる値は先頭に'を付ける
+  const safe = (v) => (/^[=@]|^[+\-](?![\d\s(])/.test(v) ? "'" + v : v);
+  const q = (v) => `"${safe(String(v ?? '')).replace(/"/g, '""')}"`;
+  const val = (c, k) => (k === 'createdAt' || k === 'updatedAt' ? (c[k] ? fmtDT(c[k]) : '') : c[k]);
+  const lines = [CSV_COLS.map((c) => q(c[1])).join(','), ...rows.map((c) => CSV_COLS.map(([k]) => q(val(c, k))).join(','))];
+  saveSmall(new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv' }), `名刺一覧_${today()}.csv`);
+  toast(`${rows.length}件を書き出しました`);
+}
+
+// RFC 4180 形式のCSVを解析（引用符・セル内改行・タブ区切りに対応）
+function parseCSV(text) {
+  text = text.replace(/^﻿/, '');
+  const first = text.slice(0, text.search(/\r?\n|$/));
+  const sep = (first.match(/\t/g) || []).length > (first.match(/,/g) || []).length ? '\t' : ',';
+  const rows = []; let row = [], f = '', i = 0, inQ = false;
+  while (i < text.length) {
+    const ch = text[i];
+    if (inQ) {
+      if (ch === '"') { if (text[i + 1] === '"') { f += '"'; i += 2; continue; } inQ = false; i++; continue; }
+      f += ch; i++; continue;
+    }
+    if (ch === '"' && f === '') { inQ = true; i++; continue; }
+    if (ch === sep) { row.push(f); f = ''; i++; continue; }
+    if (ch === '\r' || ch === '\n') { row.push(f); f = ''; rows.push(row); row = []; i += ch === '\r' && text[i + 1] === '\n' ? 2 : 1; continue; }
+    f += ch; i++;
+  }
+  if (f !== '' || row.length) { row.push(f); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c.trim() !== ''));
+}
+// 文字コード自動判別（UTF-8 → だめならShift_JIS：Windows版Excelの保存形式）
+async function readTextAuto(file) {
+  const buf = await file.arrayBuffer();
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+  catch { return new TextDecoder('shift_jis').decode(buf); }
+}
+// 列名 → 項目（このアプリ・Eight・Sansan・一般的なExcel表の列名に対応）
+const CSV_MAP = [
+  ['id', /^(id|名刺id)$/i],
+  ['fullName', /^(氏名|名前|フルネーム|お名前|name|full ?name)$/i],
+  ['sei', /^(姓|苗字|名字|氏|last ?name|family ?name|surname)$/i],
+  ['mei', /^(名|下の名前|first ?name|given ?name)$/i],
+  ['kana', /^(ふりがな|フリガナ|よみがな|ヨミガナ|よみ|読み|かな|カナ|氏名\(?カナ\)?|氏名\(?ふりがな\)?)$/i],
+  ['kanaSei', /^(姓\(?カナ\)?|姓\(?ふりがな\)?|セイ|せい|姓よみ|姓読み)$/],
+  ['kanaMei', /^(名\(?カナ\)?|名\(?ふりがな\)?|メイ|めい|名よみ|名読み)$/],
+  ['nameEn', /^(ローマ字|英語名|英字氏名|氏名\(?英字\)?|name ?\(en\))$/i],
+  ['org', /^(所属|会社名?|会社・組織名?|組織名?|勤務先|病院名?|施設名?|法人名?|団体名?|company|organization|organisation)$/i],
+  ['dept', /^(専門科・部署|専門科|診療科|部署名?|部門|所属部署|科|department|division)$/i],
+  ['title', /^(役職名?|肩書き?|職位|title|position|job ?title)$/i],
+  ['quals', /^(資格|専門医|資格・専門医(など)?)$/],
+  ['tel', /^(電話|電話番号|tel|会社電話(番号)?|代表電話(番号)?|直通電話(番号)?|tel会社|tel部門|tel直通|部門電話(番号)?|phone)$/i],
+  ['mobile', /^(携帯|携帯電話(番号)?|携帯番号|mobile|cell|cell ?phone)$/i],
+  ['fax', /^(fax|fax番号|ファックス|ファクス)$/i],
+  ['email', /^(メール|e-?mail|メールアドレス|mail|email ?address)$/i],
+  ['zip', /^(郵便番号|〒|zip|postal ?code)$/i],
+  ['address', /^(住所|所在地|会社住所|勤務先住所|address)$/i],
+  ['url', /^(url|ホームページ|hp|web|website|ウェブサイト)$/i],
+  ['metDate', /^(交換日|名刺交換日|出会った日|日付|date)$/i],
+  ['metPlace', /^(場所・イベント|場所|イベント|交換場所|出会った場所)$/],
+  ['memo', /^(メモ|備考|ノート|コメント|memo|note|notes)$/i],
+  ['createdAt', /^(登録日時|登録日|作成日時?)$/],
+  ['updatedAt', /^(更新日時|更新日)$/],
+];
+function mapHeaders(header) {
+  return header.map((h) => {
+    const n = String(h || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+    const hit = CSV_MAP.find(([, re]) => re.test(n) || re.test(n.replace(/\s/g, '')));
+    return hit ? hit[0] : null;
+  });
+}
+function normDate(v) {
+  const m = String(v || '').normalize('NFKC').match(/(\d{4})\s*[\/\-年.]\s*(\d{1,2})\s*[\/\-月.]\s*(\d{1,2})/);
+  return m ? `${m[1]}-${pad2(+m[2])}-${pad2(+m[3])}` : '';
+}
+function parseDT(v) { const m = String(v || '').match(/(\d{4})\D(\d{1,2})\D(\d{1,2})(?:\D+(\d{1,2}):(\d{2}))?/); return m ? new Date(+m[1], m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0)).getTime() : 0; }
+function rowToCard(row, keys) {
+  const c = {}; const extra = [];
+  const add = (k, v, sep = ' / ') => { if (!v) return; c[k] = c[k] ? (c[k].split(sep).includes(v) ? c[k] : c[k] + sep + v) : v; };
+  keys.forEach((k, i) => {
+    const v = String(row[i] ?? '').replace(/^'(?=[=@+\-])/, '').trim();
+    if (!v || !k) return;
+    if (k === 'memo') add('memo', v, '\n');
+    else if (k === 'address') add('address', v, ' ');
+    else if (['tel', 'mobile', 'fax', 'email'].includes(k)) add(k, v);
+    else if (k === 'org' || k === 'dept' || k === 'title') add(k, v, ' ');
+    else c[k] = v;
+  });
+  if (c.fullName && !c.sei && !c.mei) {
+    const parts = c.fullName.normalize('NFKC').trim().split(/\s+/);
+    [c.sei, c.mei] = parts.length >= 2 ? [parts[0], parts.slice(1).join(' ')] : splitName(parts[0]);
+  }
+  if (!c.kana && (c.kanaSei || c.kanaMei)) c.kana = [c.kanaSei, c.kanaMei].filter(Boolean).join(' ');
+  if (c.zip) { const z = c.zip.replace(/^〒\s*/, ''); c.address = `〒${z}` + (c.address ? ' ' + c.address : ''); }
+  if (c.metDate) c.metDate = normDate(c.metDate);
+  delete c.fullName; delete c.kanaSei; delete c.kanaMei; delete c.zip;
+  return c;
+}
+const sameKey = (c) => norm((c.sei || '') + (c.mei || '')) + '|' + norm(c.org || '');
+
+async function csvImport(file) {
+  let rows;
+  try { rows = parseCSV(await readTextAuto(file)); } catch (e) { toast('CSVを読み込めませんでした：' + e.message, 5000); return; }
+  if (rows.length < 2) { toast('データの行が見つかりませんでした'); return; }
+  const keys = mapHeaders(rows[0]);
+  if (!keys.some((k) => ['sei', 'mei', 'fullName', 'org'].includes(k))) {
+    toast('「姓・名（または氏名）」か「会社名・所属」の列が必要です', 5000); return;
+  }
+  const incoming = rows.slice(1).map((r) => rowToCard(r, keys)).filter((c) => c.sei || c.mei || c.org);
+  const byId = new Map(S.cards.map((c) => [c.id, c]));
+  const byKey = new Map(S.cards.map((c) => [sameKey(c), c]));
+  let nId = 0, nDup = 0;
+  for (const c of incoming) { if (c.id && byId.has(c.id)) nId++; else if (byKey.has(sameKey(c))) nDup++; }
+  const used = rows[0].filter((_, i) => keys[i]).map((h) => String(h).trim());
+  const unused = rows[0].filter((h, i) => !keys[i] && String(h).trim()).map((h) => String(h).trim());
+  const msg = `${incoming.length}件の名刺が見つかりました。\n` +
+    (nId ? `・このアプリの同じ名刺（ID一致）：${nId}件 → 内容を更新\n` : '') +
+    (nDup ? `・同じ名前・所属の名刺がすでにある：${nDup}件\n` : '') +
+    `・新規：${incoming.length - nId - nDup}件\n\n読み取る列：${used.join('、')}` + (unused.length ? `\n使わない列：${unused.join('、')}` : '');
+  const mode = await dialog({
+    title: 'CSVから読み込み', msg,
+    buttons: nDup ? [
+      { label: '同じ名前・所属は上書き更新する', value: 'update', cls: 'primary' },
+      { label: '同じ名前・所属は読み込まない', value: 'skip' },
+      { label: 'すべて新しい名刺として追加', value: 'add' },
+      { label: 'キャンセル', value: null, cls: 'ghost' },
+    ] : [{ label: '読み込む', value: 'add', cls: 'primary' }, { label: 'キャンセル', value: null, cls: 'ghost' }],
+  });
+  if (!mode) return;
+  const now = Date.now(); const st = { added: 0, updated: 0, skipped: 0, same: 0 };
+  const put = [];
+  for (const c of incoming) {
+    const target = (c.id && byId.get(c.id)) || (mode === 'update' ? byKey.get(sameKey(c)) : null);
+    if (!target && mode === 'skip' && byKey.has(sameKey(c))) { st.skipped++; continue; }
+    const fields = {}; for (const k of DATA_KEYS) if (c[k] !== undefined) fields[k] = c[k];
+    if (target) {
+      // 既存の名刺：CSVにある項目だけ上書き（画像・OCR結果はそのまま）。内容が同じなら何もしない
+      if (Object.keys(fields).every((k) => (fields[k] || '') === (target[k] || ''))) { st.same++; continue; }
+      const card = { ...target, ...fields, updatedAt: now, localEditAt: now }; delete card._idx;
+      put.push(card); st.updated++;
+    } else {
+      const created = parseDT(c.createdAt) || now;
+      put.push({ ...fields, id: uuid(), createdAt: created, updatedAt: now, localEditAt: now, deleted: false, hasFront: false, hasBack: false, ocrFront: '', ocrBack: '', metDate: fields.metDate || '' });
+      st.added++;
+    }
+  }
+  await tx('cards', 'readwrite', (s) => { for (const c of put) s.put(c); });
+  await loadAll(); await refreshDirty(true);
+  if (S.sel) showDetail(S.sel);
+  toast(`CSV読み込み完了：追加 ${st.added}・更新 ${st.updated}` + (st.same ? `・変更なし ${st.same}` : '') + (st.skipped ? `・スキップ ${st.skipped}` : ''), 5000);
+  renderSyncStats();
 }
 function vcard(c) {
   const e = (s) => String(s || '').replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/([,;])/g, '\\$1');
@@ -1740,7 +1896,9 @@ function bind() {
     if ((await h.requestPermission({ mode: 'read' })) !== 'granted') return;
     doImport(await h.getFile());
   });
-  $('#btnCsv').addEventListener('click', csvExport);
+  $('#btnCsv').addEventListener('click', () => csvExport(false));
+  $('#btnCsvAll').addEventListener('click', () => csvExport(true));
+  $('#csvFile').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; if (f) csvImport(f); });
   $('#optImg').addEventListener('change', (e) => { imgPreset = e.target.value; metaSet('imgPreset', imgPreset); toast('次に撮影する画像から適用されます'); });
   $('#btnShrink').addEventListener('click', async () => {
     if (await confirmDlg('保存済みの画像を縮小', `「${IMG_PRESETS[imgPreset].label}」に合わせて、保存済みの画像を縮小します。元の大きさには戻せません。\n（文字情報には影響しません）`, '縮小する')) shrinkAll();
